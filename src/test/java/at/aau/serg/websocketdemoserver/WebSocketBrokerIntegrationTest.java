@@ -1,10 +1,13 @@
 package at.aau.serg.websocketdemoserver;
 
+import at.aau.serg.websocketdemoserver.messaging.dtos.StompMessage;
 import at.aau.serg.websocketdemoserver.websocket.StompFrameHandlerClientImpl;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.messaging.converter.JacksonJsonMessageConverter;
+import org.springframework.messaging.converter.MessageConverter;
 import org.springframework.messaging.converter.StringMessageConverter;
 import org.springframework.messaging.simp.stomp.StompSession;
 import org.springframework.messaging.simp.stomp.StompSessionHandlerAdapter;
@@ -27,15 +30,12 @@ class WebSocketBrokerIntegrationTest {
 
     private final String WEBSOCKET_URI = "ws://localhost:%d/websocket-example-broker";
     private final String WEBSOCKET_TOPIC = "/topic/hello-response";
-
-    /**
-     * Queue of messages from the server.
-     */
-    BlockingQueue<String> messages = new LinkedBlockingDeque<>();
+    private final String WEBSOCKET_TOPIC_OBJECT = "/topic/rcv-object";
 
     @Test
     public void testWebSocketMessageBroker() throws Exception {
-        StompSession session = initStompSession();
+        BlockingQueue<String> messages = new LinkedBlockingDeque<>(); // Queue of messages from the server.
+        StompSession session = initStompSession(WEBSOCKET_TOPIC, new StringMessageConverter(), messages, String.class);
 
         // send a message to the server
         String message = "Test message";
@@ -45,12 +45,27 @@ class WebSocketBrokerIntegrationTest {
         assertThat(messages.poll(1, TimeUnit.SECONDS)).isEqualTo(expectedResponse);
     }
 
+    @Test
+    public void testWebSocketMessageBrokerHandleObject() throws Exception {
+        BlockingQueue<StompMessage> messages = new LinkedBlockingDeque<>(); // Queue of messages from the server.
+        StompSession session = initStompSession(WEBSOCKET_TOPIC_OBJECT, new JacksonJsonMessageConverter(), messages, StompMessage.class);
+
+        // send a message object to the server
+        StompMessage message = new StompMessage("client", "Test Object Message");
+        session.send("/app/object", message);
+
+        assertThat(messages.poll(1, TimeUnit.SECONDS)).isEqualTo(message);
+    }
+
     /**
      * @return The Stomp session for the WebSocket connection (Stomp - WebSocket is comparable to HTTP - TCP).
      */
-    public StompSession initStompSession() throws Exception {
+    public <T> StompSession initStompSession(String destination,
+                                             MessageConverter messageConverter,
+                                             BlockingQueue<T> queue,
+                                             Class<T> expectedType) throws Exception {
         WebSocketStompClient stompClient = new WebSocketStompClient(new StandardWebSocketClient());
-        stompClient.setMessageConverter(new StringMessageConverter());
+        stompClient.setMessageConverter(messageConverter);
 
         // connect client to the websocket server
         StompSession session = stompClient.connectAsync(String.format(WEBSOCKET_URI, port),
@@ -61,7 +76,7 @@ class WebSocketBrokerIntegrationTest {
 
         // subscribes to the topic defined in WebSocketBrokerController
         // and adds received messages to WebSocketBrokerIntegrationTest#messages
-        session.subscribe(WEBSOCKET_TOPIC, new StompFrameHandlerClientImpl(messages));
+        session.subscribe(destination, new StompFrameHandlerClientImpl<>(queue, expectedType));
 
         return session;
     }

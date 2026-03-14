@@ -6,22 +6,25 @@ import org.springframework.messaging.simp.stomp.StompHeaders;
 import java.lang.reflect.Type;
 import java.util.concurrent.BlockingQueue;
 
-public class StompFrameHandlerClientImpl implements StompFrameHandler {
-    private BlockingQueue<String> messagesQueue;
+public class StompFrameHandlerClientImpl<T> implements StompFrameHandler {
+    private final BlockingQueue<T> messagesQueue;
+    private final Class<T> payloadType;
 
-    public StompFrameHandlerClientImpl(BlockingQueue<String> receivedMessagesQueue) {
+    public StompFrameHandlerClientImpl(BlockingQueue<T> receivedMessagesQueue, Class<T> payloadType) {
         messagesQueue = receivedMessagesQueue;
+        this.payloadType = payloadType;
     }
 
     @Override
     public Type getPayloadType(StompHeaders headers) {
-        return String.class;
+        return this.payloadType;
     }
 
     @Override
+    @SuppressWarnings("unchecked")
     public void handleFrame(StompHeaders headers, Object payload) {
         // add the new message to the queue of received messages
-        messagesQueue.add((String) payload);
+        messagesQueue.add((T) payload);
     }
 
 }
