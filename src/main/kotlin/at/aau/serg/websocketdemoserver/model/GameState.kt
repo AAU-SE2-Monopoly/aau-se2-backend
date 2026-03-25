@@ -14,7 +14,7 @@ data class GameState(
     val chanceCards: MutableList<ChanceCard> = mutableListOf(),
     val communityChestCards: MutableList<CommunityChestCard> = mutableListOf(),
     var freeParkingMoney: Int = 0,
-    var lastDiceRoll: Pair<Int, Int>? = null
+    var lastDiceRoll: DiceRoll? = null // replaced Pair with serializable DiceRoll
 ) {
     /** The player whose turn it currently is. */
     val currentPlayer: Player?
@@ -31,4 +31,3 @@ data class GameState(
     /** Returns true when only one player has money / properties remaining. */
     fun isGameOver(): Boolean = players.count { !it.isBankrupt() } <= 1
 }
-
