@@ -21,15 +21,17 @@ class WebSocketBrokerController(
     fun createGame(player: Player) {
         val gameState = gameController.createGame()
         gameController.joinGame(gameState.gameId, player)
-        messagingTemplate.convertAndSend(
-            "/topic/game/${gameState.gameId}",
-            GameEvent(
-                gameId = gameState.gameId,
-                event = "GAME_CREATED",
-                gameState = gameState,
-                message = "Game created. Share the gameId to let others join."
-            )
+        val event = GameEvent(
+            gameId = gameState.gameId,
+            event = "GAME_CREATED",
+            gameState = gameState,
+            message = "Game created. Share the gameId to let others join."
         )
+        // Send to the real game topic (for any already-subscribed clients)
+        messagingTemplate.convertAndSend("/topic/game/${gameState.gameId}", event)
+        // Also send to the player's temporary topic so the creator receives the gameId
+        // even though they couldn't subscribe to the real topic before it was known.
+        messagingTemplate.convertAndSend("/topic/game/${player.id}", event)
     }
 
     /** JOIN – client sends a GameAction with gameId + player details in payload. */
