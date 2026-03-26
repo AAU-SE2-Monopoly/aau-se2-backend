@@ -16,8 +16,7 @@ class WebSocketBrokerConfig : WebSocketMessageBrokerConfigurer {
     }
 
     override fun registerStompEndpoints(registry: StompEndpointRegistry) {
-        registry.addEndpoint("/websocket-example-broker")
+        registry.addEndpoint("/ws")
             .setAllowedOrigins("*")
     }
 }
-
