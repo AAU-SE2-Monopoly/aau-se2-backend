@@ -15,83 +15,83 @@ object BoardFactory {
         // 0
         GoField(),
         // 1
-        PropertyField(id = 1,  name = "Mediterranean Avenue",  color = PropertyColor.BROWN,      price = 60,  rent = listOf(2, 10, 30, 90, 160, 250), houseCost = 50, hotelCost = 50),
+        PropertyField(id = 1,  name = "Herrengasse",  color = PropertyColor.BROWN,      price = 60,  rent = listOf(2, 10, 30, 90, 160, 250), houseCost = 50, hotelCost = 250),
         // 2
         CommunityChestField(id = 2),
         // 3
-        PropertyField(id = 3,  name = "Baltic Avenue",         color = PropertyColor.BROWN,      price = 60,  rent = listOf(4, 20, 60, 180, 320, 450), houseCost = 50, hotelCost = 50),
+        PropertyField(id = 3,  name = "Heiligengeistplatz",         color = PropertyColor.BROWN,      price = 60,  rent = listOf(4, 20, 60, 180, 320, 450), houseCost = 50, hotelCost = 250),
         // 4
-        TaxField(id = 4,  name = "Income Tax",    amount = 200),
+        TaxField(id = 4,  name = "Reichensteuer",    amount = 200),
         // 5
-        RailroadField(id = 5,  name = "Reading Railroad"),
+        RailroadField(id = 5,  name = "Hauptbahnhof"),
         // 6
-        PropertyField(id = 6,  name = "Oriental Avenue",       color = PropertyColor.LIGHT_BLUE, price = 100, rent = listOf(6, 30, 90, 270, 400, 550), houseCost = 50, hotelCost = 50),
+        PropertyField(id = 6,  name = "Neuer Platz",       color = PropertyColor.LIGHT_BLUE, price = 100, rent = listOf(6, 30, 90, 270, 400, 550), houseCost = 50, hotelCost = 250),
         // 7
         ChanceField(id = 7),
         // 8
-        PropertyField(id = 8,  name = "Vermont Avenue",        color = PropertyColor.LIGHT_BLUE, price = 100, rent = listOf(6, 30, 90, 270, 400, 550), houseCost = 50, hotelCost = 50),
+        PropertyField(id = 8,  name = "Alter Platz",        color = PropertyColor.LIGHT_BLUE, price = 100, rent = listOf(6, 30, 90, 270, 400, 550), houseCost = 50, hotelCost = 250),
         // 9
-        PropertyField(id = 9,  name = "Connecticut Avenue",    color = PropertyColor.LIGHT_BLUE, price = 120, rent = listOf(8, 40, 100, 300, 450, 600), houseCost = 50, hotelCost = 50),
+        PropertyField(id = 9,  name = "Benediktiner Platz",    color = PropertyColor.LIGHT_BLUE, price = 120, rent = listOf(8, 40, 100, 300, 450, 600), houseCost = 50, hotelCost = 250),
         // 10
         JailField(),
         // 11
-        PropertyField(id = 11, name = "St. Charles Place",     color = PropertyColor.PINK,       price = 140, rent = listOf(10, 50, 150, 450, 625, 750), houseCost = 100, hotelCost = 100),
+        PropertyField(id = 11, name = "Cine City",     color = PropertyColor.PINK,       price = 140, rent = listOf(10, 50, 150, 450, 625, 750), houseCost = 100, hotelCost = 500),
         // 12
-        UtilityField(id = 12, name = "Electric Company"),
+        UtilityField(id = 12, name = "Elektrizitätswerk"),
         // 13
-        PropertyField(id = 13, name = "States Avenue",         color = PropertyColor.PINK,       price = 140, rent = listOf(10, 50, 150, 450, 625, 750), houseCost = 100, hotelCost = 100),
+        PropertyField(id = 13, name = "McDonalds",         color = PropertyColor.PINK,       price = 140, rent = listOf(10, 50, 150, 450, 625, 750), houseCost = 100, hotelCost = 500),
         // 14
-        PropertyField(id = 14, name = "Virginia Avenue",       color = PropertyColor.PINK,       price = 160, rent = listOf(12, 60, 180, 500, 700, 900), houseCost = 100, hotelCost = 100),
+        PropertyField(id = 14, name = "Ruthar",       color = PropertyColor.PINK,       price = 160, rent = listOf(12, 60, 180, 500, 700, 900), houseCost = 100, hotelCost = 500),
         // 15
-        RailroadField(id = 15, name = "Pennsylvania Railroad"),
+        RailroadField(id = 15, name = "Ostbahnhof"),
         // 16
-        PropertyField(id = 16, name = "St. James Place",       color = PropertyColor.ORANGE,     price = 180, rent = listOf(14, 70, 200, 550, 750, 950), houseCost = 100, hotelCost = 100),
+        PropertyField(id = 16, name = "Wohnzimmer",       color = PropertyColor.ORANGE,     price = 180, rent = listOf(14, 70, 200, 550, 750, 950), houseCost = 100, hotelCost = 500),
         // 17
         CommunityChestField(id = 17),
         // 18
-        PropertyField(id = 18, name = "Tennessee Avenue",      color = PropertyColor.ORANGE,     price = 180, rent = listOf(14, 70, 200, 550, 750, 950), houseCost = 100, hotelCost = 100),
+        PropertyField(id = 18, name = "Hafenstadt",      color = PropertyColor.ORANGE,     price = 180, rent = listOf(14, 70, 200, 550, 750, 950), houseCost = 100, hotelCost = 500),
         // 19
-        PropertyField(id = 19, name = "New York Avenue",       color = PropertyColor.ORANGE,     price = 200, rent = listOf(16, 80, 220, 600, 800, 1000), houseCost = 100, hotelCost = 100),
+        PropertyField(id = 19, name = "Lendcafe",       color = PropertyColor.ORANGE,     price = 200, rent = listOf(16, 80, 220, 600, 800, 1000), houseCost = 100, hotelCost = 500),
         // 20
         FreeParkingField(),
         // 21
-        PropertyField(id = 21, name = "Kentucky Avenue",       color = PropertyColor.RED,        price = 220, rent = listOf(18, 90, 250, 700, 875, 1050), houseCost = 150, hotelCost = 150),
+        PropertyField(id = 21, name = "City Arkaden",       color = PropertyColor.RED,        price = 220, rent = listOf(18, 90, 250, 700, 875, 1050), houseCost = 150, hotelCost = 750),
         // 22
         ChanceField(id = 22),
         // 23
-        PropertyField(id = 23, name = "Indiana Avenue",        color = PropertyColor.RED,        price = 220, rent = listOf(18, 90, 250, 700, 875, 1050), houseCost = 150, hotelCost = 150),
+        PropertyField(id = 23, name = "Le Burger",        color = PropertyColor.RED,        price = 220, rent = listOf(18, 90, 250, 700, 875, 1050), houseCost = 150, hotelCost = 750),
         // 24
-        PropertyField(id = 24, name = "Illinois Avenue",       color = PropertyColor.RED,        price = 240, rent = listOf(20, 100, 300, 750, 925, 1100), houseCost = 150, hotelCost = 150),
+        PropertyField(id = 24, name = "McMullens",       color = PropertyColor.RED,        price = 240, rent = listOf(20, 100, 300, 750, 925, 1100), houseCost = 150, hotelCost = 750),
         // 25
-        RailroadField(id = 25, name = "B&O Railroad"),
+        RailroadField(id = 25, name = "Westbahnhof"),
         // 26
-        PropertyField(id = 26, name = "Atlantic Avenue",       color = PropertyColor.YELLOW,     price = 260, rent = listOf(22, 110, 330, 800, 975, 1150), houseCost = 150, hotelCost = 150),
+        PropertyField(id = 26, name = "Mensa",       color = PropertyColor.YELLOW,     price = 260, rent = listOf(22, 110, 330, 800, 975, 1150), houseCost = 150, hotelCost = 750),
         // 27
-        PropertyField(id = 27, name = "Ventnor Avenue",        color = PropertyColor.YELLOW,     price = 260, rent = listOf(22, 110, 330, 800, 975, 1150), houseCost = 150, hotelCost = 150),
+        PropertyField(id = 27, name = "Universität Klagenfurt",        color = PropertyColor.YELLOW,     price = 260, rent = listOf(22, 110, 330, 800, 975, 1150), houseCost = 150, hotelCost = 750),
         // 28
-        UtilityField(id = 28, name = "Water Works"),
+        UtilityField(id = 28, name = "Wasserwerke"),
         // 29
-        PropertyField(id = 29, name = "Marvin Gardens",        color = PropertyColor.YELLOW,     price = 280, rent = listOf(24, 120, 360, 850, 1025, 1200), houseCost = 150, hotelCost = 150),
+        PropertyField(id = 29, name = "Lakeside",        color = PropertyColor.YELLOW,     price = 280, rent = listOf(24, 120, 360, 850, 1025, 1200), houseCost = 150, hotelCost = 750),
         // 30
         GoToJailField(),
         // 31
-        PropertyField(id = 31, name = "Pacific Avenue",        color = PropertyColor.GREEN,      price = 300, rent = listOf(26, 130, 390, 900, 1100, 1275), houseCost = 200, hotelCost = 200),
+        PropertyField(id = 31, name = "Strandbad",        color = PropertyColor.GREEN,      price = 300, rent = listOf(26, 130, 390, 900, 1100, 1275), houseCost = 200, hotelCost = 1000),
         // 32
-        PropertyField(id = 32, name = "North Carolina Avenue", color = PropertyColor.GREEN,      price = 300, rent = listOf(26, 130, 390, 900, 1100, 1275), houseCost = 200, hotelCost = 200),
+        PropertyField(id = 32, name = "Loretto", color = PropertyColor.GREEN,      price = 300, rent = listOf(26, 130, 390, 900, 1100, 1275), houseCost = 200, hotelCost = 1000),
         // 33
         CommunityChestField(id = 33),
         // 34
-        PropertyField(id = 34, name = "Pennsylvania Avenue",   color = PropertyColor.GREEN,      price = 320, rent = listOf(28, 150, 450, 1000, 1200, 1400), houseCost = 200, hotelCost = 200),
+        PropertyField(id = 34, name = "Villa Lido",   color = PropertyColor.GREEN,      price = 320, rent = listOf(28, 150, 450, 1000, 1200, 1400), houseCost = 200, hotelCost = 1000),
         // 35
-        RailroadField(id = 35, name = "Short Line Railroad"),
+        RailroadField(id = 35, name = "Lendbahnhof"),
         // 36
         ChanceField(id = 36),
         // 37
-        PropertyField(id = 37, name = "Park Place",            color = PropertyColor.DARK_BLUE,  price = 350, rent = listOf(35, 175, 500, 1100, 1300, 1500), houseCost = 200, hotelCost = 200),
+        PropertyField(id = 37, name = "Botanischer Garten",            color = PropertyColor.DARK_BLUE,  price = 350, rent = listOf(35, 175, 500, 1100, 1300, 1500), houseCost = 200, hotelCost = 1000),
         // 38
-        TaxField(id = 38, name = "Luxury Tax", amount = 100),
+        TaxField(id = 38, name = "Reichensteuer", amount = 100),
         // 39
-        PropertyField(id = 39, name = "Boardwalk",             color = PropertyColor.DARK_BLUE,  price = 400, rent = listOf(50, 200, 600, 1400, 1700, 2000), houseCost = 200, hotelCost = 200)
+        PropertyField(id = 39, name = "Kreuzbergl",             color = PropertyColor.DARK_BLUE,  price = 400, rent = listOf(50, 200, 600, 1400, 1700, 2000), houseCost = 200, hotelCost = 1000)
     )
 
     fun createChanceCards(): MutableList<ChanceCard> = mutableListOf(
