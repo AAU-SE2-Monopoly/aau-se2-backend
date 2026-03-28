@@ -100,7 +100,7 @@ object BoardFactory {
         ChanceCard(id = 3,  description = "Du hast ein Date, gehe ins CineCity zum Bowlen. Kommst du über Los, ziehe 200€ ein.",                          action = CardAction.MOVE_TO,           targetFieldId = 11),
         ChanceCard(id = 4,  description = "Dein Zug fährt gleich ohne dich! Begib dich sofort zum nächsten Bahnhof!",                           action = CardAction.MOVE_TO,           targetFieldId = -1),
         ChanceCard(id = 5,  description = "Du musst sofort die Stadt verlassen, begib dich umgehend zum nächsten Transportmittel!",                            action = CardAction.MOVE_TO,           targetFieldId = -2),
-        ChanceCard(id = 6,  description = "Dein Goldsparplan wirft Gewinn ab. Ziehe 50€ ein.",                        action = CardAction.COLLECT_MONEY,     amount = 50),
+        ChanceCard(id = 6,  description = "Beim Verkauf von Altkleidern auf Vinted machst du Gewinn. Ziehe 50€ ein.",                        action = CardAction.COLLECT_MONEY,     amount = 50),
         ChanceCard(id = 7,  description = "Du wurdest aus Mangeln an Beweisen freigesprochen! Verlasse das Gefängnis!",                                  action = CardAction.GET_OUT_OF_JAIL),
         ChanceCard(id = 8,  description = "Du bist zu betrunken und stolperst 3 Felder zurück!",                                      action = CardAction.MOVE_FORWARD,      moveSpaces = -3),
         ChanceCard(id = 9,  description = "Aufgrund eines Alkoholexzesses verbringst du die nächste Zeit in der Ausnüchterungszelle. Du wirst umgehend abgeführt. Gehe nicht über Los, ziehe keine 200€ ein!",                                            action = CardAction.GO_TO_JAIL),
