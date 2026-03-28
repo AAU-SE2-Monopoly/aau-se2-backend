@@ -37,7 +37,7 @@ object BoardFactory {
         // 11
         PropertyField(id = 11, name = "Cine City",     color = PropertyColor.PINK,       price = 140, rent = listOf(10, 50, 150, 450, 625, 750), houseCost = 100, hotelCost = 500),
         // 12
-        UtilityField(id = 12, name = "Elektrizitätswerk"),
+        UtilityField(id = 12, name = "Kelag Klagenfurt", price = 150),
         // 13
         PropertyField(id = 13, name = "McDonalds",         color = PropertyColor.PINK,       price = 140, rent = listOf(10, 50, 150, 450, 625, 750), houseCost = 100, hotelCost = 500),
         // 14
@@ -69,7 +69,7 @@ object BoardFactory {
         // 27
         PropertyField(id = 27, name = "Universität Klagenfurt",        color = PropertyColor.YELLOW,     price = 260, rent = listOf(22, 110, 330, 800, 975, 1150), houseCost = 150, hotelCost = 750),
         // 28
-        UtilityField(id = 28, name = "Wasserwerke"),
+        UtilityField(id = 28, name = "Stadtwerke Klagenfurt", price = 150),
         // 29
         PropertyField(id = 29, name = "Lakeside",        color = PropertyColor.YELLOW,     price = 280, rent = listOf(24, 120, 360, 850, 1025, 1200), houseCost = 150, hotelCost = 750),
         // 30
@@ -95,41 +95,41 @@ object BoardFactory {
     )
 
     fun createChanceCards(): MutableList<ChanceCard> = mutableListOf(
-        ChanceCard(id = 1,  description = "Advance to Go (Collect \$200)",                          action = CardAction.MOVE_TO,           targetFieldId = 0,  amount = 200),
-        ChanceCard(id = 2,  description = "Advance to Illinois Ave.",                               action = CardAction.MOVE_TO,           targetFieldId = 24),
-        ChanceCard(id = 3,  description = "Advance to St. Charles Place.",                          action = CardAction.MOVE_TO,           targetFieldId = 11),
-        ChanceCard(id = 4,  description = "Advance to nearest Railroad.",                           action = CardAction.MOVE_TO,           targetFieldId = -1),
-        ChanceCard(id = 5,  description = "Advance to nearest Utility.",                            action = CardAction.MOVE_TO,           targetFieldId = -2),
-        ChanceCard(id = 6,  description = "Bank pays you dividend of \$50.",                        action = CardAction.COLLECT_MONEY,     amount = 50),
-        ChanceCard(id = 7,  description = "Get Out of Jail Free.",                                  action = CardAction.GET_OUT_OF_JAIL),
-        ChanceCard(id = 8,  description = "Go back 3 spaces.",                                      action = CardAction.MOVE_FORWARD,      moveSpaces = -3),
-        ChanceCard(id = 9,  description = "Go to Jail.",                                            action = CardAction.GO_TO_JAIL),
-        ChanceCard(id = 10, description = "Make general repairs on all your property. \$25/house, \$100/hotel.", action = CardAction.PAY_MONEY, amount = 25),
-        ChanceCard(id = 11, description = "Pay poor tax of \$15.",                                  action = CardAction.PAY_MONEY,         amount = 15),
-        ChanceCard(id = 12, description = "Take a trip to Reading Railroad.",                       action = CardAction.MOVE_TO,           targetFieldId = 5),
-        ChanceCard(id = 13, description = "Take a walk on the Boardwalk.",                          action = CardAction.MOVE_TO,           targetFieldId = 39),
-        ChanceCard(id = 14, description = "You have been elected chairman. Pay each player \$50.",  action = CardAction.PAY_EACH_PLAYER,   amount = 50),
-        ChanceCard(id = 15, description = "Your building and loan matures. Collect \$150.",         action = CardAction.COLLECT_MONEY,     amount = 150),
-        ChanceCard(id = 16, description = "You have won a crossword competition. Collect \$100.",   action = CardAction.COLLECT_MONEY,     amount = 100)
+        ChanceCard(id = 1,  description = "Ein GTI-Fahrer fährt durch Reifnitz und nimmt dich mit auf Los. Ziehe 200€ ein.",                          action = CardAction.MOVE_TO,           targetFieldId = 0,  amount = 200),
+        ChanceCard(id = 2,  description = "Du triffst dich mit deinen Freunden auf ein Guinness im McMullens. Kommst du über Los, ziehe 200€ ein.",                               action = CardAction.MOVE_TO,           targetFieldId = 24),
+        ChanceCard(id = 3,  description = "Du hast ein Date, gehe ins CineCity zum Bowlen. Kommst du über Los, ziehe 200€ ein.",                          action = CardAction.MOVE_TO,           targetFieldId = 11),
+        ChanceCard(id = 4,  description = "Dein Zug fährt gleich ohne dich! Begib dich sofort zum nächsten Bahnhof!",                           action = CardAction.MOVE_TO,           targetFieldId = -1),
+        ChanceCard(id = 5,  description = "Du musst sofort die Stadt verlassen, begib dich umgehend zum nächsten Transportmittel!",                            action = CardAction.MOVE_TO,           targetFieldId = -2),
+        ChanceCard(id = 6,  description = "Dein Goldsparplan wirft Gewinn ab. Ziehe 50€ ein.",                        action = CardAction.COLLECT_MONEY,     amount = 50),
+        ChanceCard(id = 7,  description = "Du wurdest aus Mangeln an Beweisen freigesprochen! Verlasse das Gefängnis!",                                  action = CardAction.GET_OUT_OF_JAIL),
+        ChanceCard(id = 8,  description = "Du bist zu betrunken und stolperst 3 Felder zurück!",                                      action = CardAction.MOVE_FORWARD,      moveSpaces = -3),
+        ChanceCard(id = 9,  description = "Aufgrund eines Alkoholexzesses verbringst du die nächste Zeit in der Ausnüchterungszelle. Du wirst umgehend abgeführt. Gehe nicht über Los, ziehe keine 200€ ein!",                                            action = CardAction.GO_TO_JAIL),
+        ChanceCard(id = 10, description = "Eine Klima-Demo ist außer Kontrolle geraten, deine Häuser und Hotels wurden beschädigt. Zahle für jedes Haus 25€ und für jedes Hotel 100€.", action = CardAction.PAY_MONEY, amount = 25),
+        ChanceCard(id = 11, description = "Der ÖH-Beitrag der Universität wird fällig. Zahle 15€.",                                  action = CardAction.PAY_MONEY,         amount = 15),
+        ChanceCard(id = 12, description = "Du hast ein Sparschiene-Ticket und willst die Stadt verlassen. Gehe zum Hauptbahnhof.",                       action = CardAction.MOVE_TO,           targetFieldId = 5),
+        ChanceCard(id = 13, description = "Du gehst am Kreuzbergl spazieren und bewunderst die Landschaft.",                          action = CardAction.MOVE_TO,           targetFieldId = 39),
+        ChanceCard(id = 14, description = "Du lädst alle Spieler zur Starnacht am Wörthersee ein. Zahle jedem 50€",  action = CardAction.PAY_EACH_PLAYER,   amount = 50),
+        ChanceCard(id = 15, description = "Dein Bausparvertrag läuft aus. Ziehe 150€ ein.",         action = CardAction.COLLECT_MONEY,     amount = 150),
+        ChanceCard(id = 16, description = "Du gewinnst den Bachmannpreis und erhälst 100€.",   action = CardAction.COLLECT_MONEY,     amount = 100)
     ).also { it.shuffle() }
 
     fun createCommunityChestCards(): MutableList<CommunityChestCard> = mutableListOf(
-        CommunityChestCard(id = 1,  description = "Advance to Go (Collect \$200).",                action = CardAction.MOVE_TO,           targetFieldId = 0, amount = 200),
-        CommunityChestCard(id = 2,  description = "Bank error in your favor. Collect \$200.",      action = CardAction.COLLECT_MONEY,     amount = 200),
-        CommunityChestCard(id = 3,  description = "Doctor's fee. Pay \$50.",                       action = CardAction.PAY_MONEY,         amount = 50),
-        CommunityChestCard(id = 4,  description = "From sale of stock you get \$50.",              action = CardAction.COLLECT_MONEY,     amount = 50),
-        CommunityChestCard(id = 5,  description = "Get Out of Jail Free.",                         action = CardAction.GET_OUT_OF_JAIL),
-        CommunityChestCard(id = 6,  description = "Go to Jail.",                                   action = CardAction.GO_TO_JAIL),
-        CommunityChestCard(id = 7,  description = "Grand Opera Night. Collect \$50 from every player.", action = CardAction.COLLECT_FROM_EACH, amount = 50),
-        CommunityChestCard(id = 8,  description = "Holiday Fund matures. Receive \$100.",          action = CardAction.COLLECT_MONEY,     amount = 100),
-        CommunityChestCard(id = 9,  description = "Income tax refund. Collect \$20.",              action = CardAction.COLLECT_MONEY,     amount = 20),
-        CommunityChestCard(id = 10, description = "It is your birthday. Collect \$10 from every player.", action = CardAction.COLLECT_FROM_EACH, amount = 10),
-        CommunityChestCard(id = 11, description = "Life insurance matures. Collect \$100.",        action = CardAction.COLLECT_MONEY,     amount = 100),
-        CommunityChestCard(id = 12, description = "Pay hospital fees of \$100.",                   action = CardAction.PAY_MONEY,         amount = 100),
-        CommunityChestCard(id = 13, description = "Pay school fees of \$150.",                     action = CardAction.PAY_MONEY,         amount = 150),
-        CommunityChestCard(id = 14, description = "Receive \$25 consultancy fee.",                 action = CardAction.COLLECT_MONEY,     amount = 25),
-        CommunityChestCard(id = 15, description = "You are assessed for street repairs. \$40/house, \$115/hotel.", action = CardAction.PAY_MONEY, amount = 40),
-        CommunityChestCard(id = 16, description = "You have won second prize in a beauty contest. Collect \$10.", action = CardAction.COLLECT_MONEY, amount = 10)
+        CommunityChestCard(id = 1,  description = "Du fliegst mit RyanAir auf Los. Ziehe 200€ ein.", action = CardAction.MOVE_TO,           targetFieldId = 0, amount = 200),
+        CommunityChestCard(id = 2,  description = "Du machst Gewinn beim Admiral Waidmannsdorf. Ziehe 200€ ein.", action = CardAction.COLLECT_MONEY,     amount = 200),
+        CommunityChestCard(id = 3,  description = "Eine Rechnung des Schönheitschirugen. Bezahle 50€",                       action = CardAction.PAY_MONEY,         amount = 50),
+        CommunityChestCard(id = 4,  description = "Deine ETF´s werfen beim Verkauf Gewinn ab, du erhälst 50€",              action = CardAction.COLLECT_MONEY,     amount = 50),
+        CommunityChestCard(id = 5,  description = "Die Haftanstalt Klagenfurt entlässt dich aufgrund guter Führung.",                         action = CardAction.GET_OUT_OF_JAIL),
+        CommunityChestCard(id = 6,  description = "Du wurdest im Göthepark beim Drogenhandel erwischt. Du wirst umgehend in die Haftanstalt Klagenfurt abgeführt. Gehe nicht über Los, ziehe keine 200€ ein!",                                   action = CardAction.GO_TO_JAIL),
+        CommunityChestCard(id = 7,  description = "Du verkaufst Rosen an einem Samstagabend in der Eventstage. Ziehe 100€ ein.", action = CardAction.COLLECT_MONEY, amount = 100),
+        CommunityChestCard(id = 8,  description = "Du bist für einen Abend lang Hilfskellner im Speki und erhälst 100€ Trinkgeld.",          action = CardAction.COLLECT_MONEY,     amount = 100),
+        CommunityChestCard(id = 9,  description = "Du gewinnst einen AK-Bildungsgutschein im Wert von 20€.",              action = CardAction.COLLECT_MONEY,     amount = 20),
+        CommunityChestCard(id = 10, description = "Du verkaufst Tickets für den Altstadtzauber. Du erhälst von jedem Spieler 10€.", action = CardAction.COLLECT_FROM_EACH, amount = 10),
+        CommunityChestCard(id = 11, description = "Du verkaufst beim Glühwein-Opening billigen Glühwein und kassierst 100€.",        action = CardAction.COLLECT_MONEY,     amount = 100),
+        CommunityChestCard(id = 12, description = "Du lädst deine Homies auf einen Döner ein, zahle 100€",                   action = CardAction.PAY_MONEY,         amount = 100),
+        CommunityChestCard(id = 13, description = "Du übersiehst die Zeit beim Shoppen am Neuen Platz. Dein Auto steht in der Tiefgarage Lindwurm. Zahle 50€!",                     action = CardAction.PAY_MONEY,         amount = 50),
+        CommunityChestCard(id = 14, description = "Du singst beim After Work Markt am Benediktiner Platz und erhälst 25€.",                 action = CardAction.COLLECT_MONEY,     amount = 25),
+        CommunityChestCard(id = 15, description = "Deine Immobilien wurden durch Vandalismus von Jugendlichen beschädigt. Zahle für jedes Haus 40€ und für jedes Hotel 115€.", action = CardAction.PAY_MONEY, amount = 40),
+        CommunityChestCard(id = 16, description = "Du machst beim Ironman den zweiten Platz und erhälst 10€.", action = CardAction.COLLECT_MONEY, amount = 10)
     ).also { it.shuffle() }
 }
 
