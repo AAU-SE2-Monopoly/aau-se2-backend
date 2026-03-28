@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - chore/setup-sonar-gradle
   pull_request:
     types: [opened, synchronize, reopened]
 
