@@ -1,11 +1,13 @@
 package at.aau.serg.websocketdemoserver.model
 
+import at.aau.serg.websocketdemoserver.model.enums.PlayerToken
 import com.fasterxml.jackson.annotation.JsonSetter
 import com.fasterxml.jackson.annotation.Nulls
 
 data class Player(
     val id: String,
     var name: String,
+    val playerToken: PlayerToken? = null,
     @JsonSetter(nulls = Nulls.SKIP) var position: Int = 0,
     @JsonSetter(nulls = Nulls.SKIP) var money: Int = 1500,
     @JsonSetter(nulls = Nulls.SKIP) var inJail: Boolean = false,
