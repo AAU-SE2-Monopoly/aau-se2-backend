@@ -129,6 +129,6 @@ class BoardFactoryTest {
         val board = BoardFactory.createDefaultBoard()
 
         assertEquals("Go", board[0].name)
-        assertEquals("Boardwalk", board[39].name)
+        assertEquals("Kreuzbergl", board[39].name)
     }
 }
