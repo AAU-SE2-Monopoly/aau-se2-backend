@@ -36,12 +36,15 @@ dependencies {
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
+
     testImplementation("org.junit.jupiter:junit-jupiter-api")
     testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine")
 }
 
 tasks.withType<Test> {
     useJUnitPlatform()
+
+    finalizedBy(tasks.jacocoTestReport)
 }
 
 tasks.jacocoTestReport {
@@ -54,11 +57,11 @@ tasks.jacocoTestReport {
 
 sonarqube {
     properties {
-        property("sonar.organization", "aau-se2")
-        property("sonar.projectKey", "AAU-SE2_WebSocketDemo-Server")
+
+        property("sonar.organization", "aau-se2-monopoly")
+        property("sonar.projectKey", "AAU-SE2-Monopoly_aau-se2-backend")
         property("sonar.host.url", "https://sonarcloud.io")
         property("sonar.coverage.jacoco.xmlReportPaths",
             layout.buildDirectory.file("reports/jacoco/jacocoTestReport/jacocoTestReport.xml").get().asFile.path)
     }
 }
-
