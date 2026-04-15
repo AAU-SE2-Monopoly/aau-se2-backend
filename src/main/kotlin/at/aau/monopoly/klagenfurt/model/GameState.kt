@@ -14,7 +14,8 @@ data class GameState(
     val chanceCards: MutableList<ChanceCard> = mutableListOf(),
     val communityChestCards: MutableList<CommunityChestCard> = mutableListOf(),
     var freeParkingMoney: Int = 0,
-    var lastDiceRoll: DiceRoll? = null // replaced Pair with serializable DiceRoll
+    var lastDiceRoll: DiceRoll? = null, // replaced Pair with serializable DiceRoll
+    val hostPlayerId: String = "" // the player who created the game (host)
 ) {
     /** The player whose turn it currently is. */
     val currentPlayer: Player?

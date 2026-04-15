@@ -1,8 +1,10 @@
 package at.aau.monopoly.klagenfurt.controller
 
+import at.aau.monopoly.klagenfurt.messaging.dtos.GameLobbyInfo
 import at.aau.monopoly.klagenfurt.model.BoardFactory
 import at.aau.monopoly.klagenfurt.model.GameState
 import at.aau.monopoly.klagenfurt.model.Player
+import at.aau.monopoly.klagenfurt.model.enums.GamePhase
 import org.springframework.stereotype.Service
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -10,22 +12,24 @@ import java.util.concurrent.ConcurrentHashMap
 @Service
 class GameController {
 
-    private val games: ConcurrentHashMap<String, at.aau.monopoly.klagenfurt.model.GameState> = ConcurrentHashMap()
+    private val games: ConcurrentHashMap<String, GameState> = ConcurrentHashMap()
 
     /** Maximum number of players allowed per game. */
     val maxPlayersPerGame: Int = 6
 
     /**
      * Creates a new game with a fresh board and empty player list.
-     * @return the newly created [at.aau.monopoly.klagenfurt.model.GameState].
+     * The [hostPlayerId] is recorded as the host of the game.
+     * @return the newly created [GameState].
      */
-    fun createGame(): GameState {
+    fun createGame(hostPlayerId: String = ""): GameState {
         val gameId = UUID.randomUUID().toString()
         val gameState = GameState(
             gameId = gameId,
             fields = BoardFactory.createDefaultBoard(),
             chanceCards = BoardFactory.createChanceCards(),
-            communityChestCards = BoardFactory.createCommunityChestCards()
+            communityChestCards = BoardFactory.createCommunityChestCards(),
+            hostPlayerId = hostPlayerId
         )
         games[gameId] = gameState
         return gameState
@@ -61,8 +65,41 @@ class GameController {
     fun removeGame(gameId: String): Boolean = games.remove(gameId) != null
 
     /**
+     * Closes (removes) the game if the requesting [playerId] is the host.
+     * @return the removed [GameState], or null if the game does not exist.
+     * @throws IllegalArgumentException if the player is not the host.
+     */
+    fun closeGame(gameId: String, playerId: String): GameState {
+        val gameState = games[gameId]
+            ?: throw IllegalArgumentException("Game with id '$gameId' not found.")
+        require(gameState.hostPlayerId == playerId) {
+            "Only the host can close the game."
+        }
+        games.remove(gameId)
+        return gameState
+    }
+
+    /**
      * Returns all active game IDs.
      */
     fun listGameIds(): Set<String> = games.keys.toSet()
+
+    /**
+     * Returns a list of [GameLobbyInfo] for all games that are still in the WAITING phase
+     * (i.e. open for joining).
+     */
+    fun listOpenGames(): List<GameLobbyInfo> =
+        games.values
+            .filter { it.phase == GamePhase.WAITING }
+            .map { game ->
+                val hostName = game.players.firstOrNull { it.id == game.hostPlayerId }?.name ?: "Unknown"
+                GameLobbyInfo(
+                    gameId = game.gameId,
+                    hostPlayerName = hostName,
+                    playerCount = game.players.size,
+                    maxPlayers = maxPlayersPerGame,
+                    phase = game.phase
+                )
+            }
 }
 

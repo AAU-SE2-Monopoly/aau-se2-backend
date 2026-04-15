@@ -131,4 +131,78 @@ class GameControllerTest {
         assertTrue(ids.contains(game1.gameId))
         assertTrue(ids.contains(game2.gameId))
     }
+
+    // ─── Host / Close / Lobby ────────────────────────────────────────────────
+
+    @Test
+    fun `createGame should record hostPlayerId`() {
+        val controller = GameController()
+        val game = controller.createGame(hostPlayerId = "host-1")
+
+        assertEquals("host-1", game.hostPlayerId)
+    }
+
+    @Test
+    fun `closeGame should remove the game when called by host`() {
+        val controller = GameController()
+        val game = controller.createGame(hostPlayerId = "host-1")
+
+        val closed = controller.closeGame(game.gameId, "host-1")
+
+        assertEquals(game.gameId, closed.gameId)
+        assertNull(controller.getGameState(game.gameId))
+    }
+
+    @Test
+    fun `closeGame should throw when called by non-host`() {
+        val controller = GameController()
+        val game = controller.createGame(hostPlayerId = "host-1")
+
+        val exception = assertThrows(IllegalArgumentException::class.java) {
+            controller.closeGame(game.gameId, "some-other-player")
+        }
+
+        assertTrue(exception.message!!.contains("Only the host"))
+        // Game should still exist
+        assertNotNull(controller.getGameState(game.gameId))
+    }
+
+    @Test
+    fun `closeGame should throw when game does not exist`() {
+        val controller = GameController()
+
+        val exception = assertThrows(IllegalArgumentException::class.java) {
+            controller.closeGame("unknown-game", "host-1")
+        }
+
+        assertTrue(exception.message!!.contains("not found"))
+    }
+
+    @Test
+    fun `listOpenGames should return only games in WAITING phase`() {
+        val controller = GameController()
+        val game1 = controller.createGame(hostPlayerId = "host-1")
+        controller.joinGame(game1.gameId, Player(id = "host-1", name = "Alice"))
+        val game2 = controller.createGame(hostPlayerId = "host-2")
+        controller.joinGame(game2.gameId, Player(id = "host-2", name = "Bob"))
+
+        // Start game1 so it leaves WAITING
+        controller.getGameState(game1.gameId)!!.advanceTurn()
+
+        val openGames = controller.listOpenGames()
+
+        assertEquals(1, openGames.size)
+        assertEquals(game2.gameId, openGames[0].gameId)
+        assertEquals("Bob", openGames[0].hostPlayerName)
+        assertEquals(1, openGames[0].playerCount)
+    }
+
+    @Test
+    fun `listOpenGames should return empty when no games exist`() {
+        val controller = GameController()
+
+        val openGames = controller.listOpenGames()
+
+        assertTrue(openGames.isEmpty())
+    }
 }
