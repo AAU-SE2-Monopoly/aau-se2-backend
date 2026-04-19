@@ -218,4 +218,16 @@ class GameControllerTest {
 
         assertTrue(openGames.isEmpty())
     }
+
+    @Test
+    fun `listOpenGames should use Unknown when host has not joined yet`() {
+        val controller = GameController()
+        val game = controller.createGame(hostPlayerId = "host-1")
+
+        val openGames = controller.listOpenGames()
+
+        assertEquals(1, openGames.size)
+        assertEquals(game.gameId, openGames[0].gameId)
+        assertEquals("Unknown", openGames[0].hostPlayerName)
+    }
 }
