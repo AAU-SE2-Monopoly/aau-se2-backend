@@ -7,6 +7,7 @@ import at.aau.monopoly.klagenfurt.websocket.StompFrameHandlerClientImpl
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
+import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.web.server.LocalServerPort
 import org.springframework.messaging.converter.JacksonJsonMessageConverter
@@ -24,6 +25,9 @@ import java.util.concurrent.TimeUnit
 @ExtendWith(SpringExtension::class)
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class WebSocketBrokerIntegrationTest {
+
+    @Autowired
+    private lateinit var gameController: at.aau.monopoly.klagenfurt.controller.GameController
 
     @LocalServerPort
     private var port: Int = 0
@@ -82,6 +86,28 @@ class WebSocketBrokerIntegrationTest {
         session.disconnect()
     }
 
+    @Test
+    fun `create game stores host icon in broadcast game state`() {
+        val events: BlockingQueue<GameEvent> = LinkedBlockingDeque()
+        val session = initStompSession(
+            "/topic/game/host-player",
+            JacksonJsonMessageConverter(),
+            events,
+            GameEvent::class.java
+        )
+
+        session.send("/app/game/create", Player(id = "host-player", name = "Alice", iconId = "gti"))
+
+        val event = events.poll(2, TimeUnit.SECONDS)
+        assertThat(event).isNotNull
+        assertThat(event!!.event).isEqualTo("GAME_CREATED")
+        assertThat(event.gameState).isNotNull
+        assertThat(event.gameState!!.players).hasSize(1)
+        assertThat(event.gameState!!.players[0].iconId).isEqualTo("gti")
+
+        session.disconnect()
+    }
+
     // ─── Game: full flow with known gameId ───────────────────────────────────
 
     @Test
@@ -106,6 +132,55 @@ class WebSocketBrokerIntegrationTest {
         // Real end-to-end game flow tests are better done via a shared GameController @Autowired.
 
         sessionA.disconnect()
+    }
+
+    @Test
+    fun `join game stores icon from payload and broadcasts it`() {
+        val createEvents: BlockingQueue<GameEvent> = LinkedBlockingDeque()
+        val creatorSession = initStompSession(
+            "/topic/game/host-for-join",
+            JacksonJsonMessageConverter(),
+            createEvents,
+            GameEvent::class.java
+        )
+
+        creatorSession.send("/app/game/create", Player(id = "host-for-join", name = "Alice", iconId = "woerthersee"))
+
+        val createEvent = createEvents.poll(2, TimeUnit.SECONDS)
+        assertThat(createEvent).isNotNull
+        val gameId = createEvent!!.gameId
+        assertThat(gameId).isNotBlank()
+
+        val gameEvents: BlockingQueue<GameEvent> = LinkedBlockingDeque()
+        val joinerSession = initStompSession(
+            "/topic/game/$gameId",
+            JacksonJsonMessageConverter(),
+            gameEvents,
+            GameEvent::class.java
+        )
+
+        joinerSession.send(
+            "/app/game/join",
+            GameAction(
+                gameId = gameId,
+                playerId = "joiner-1",
+                payload = mapOf(
+                    "name" to "Bob",
+                    "iconId" to "ironman"
+                )
+            )
+        )
+
+        val joinEvent = gameEvents.poll(2, TimeUnit.SECONDS)
+        assertThat(joinEvent).isNotNull
+        assertThat(joinEvent!!.event).isEqualTo("PLAYER_JOINED")
+        assertThat(joinEvent.gameState).isNotNull
+        assertThat(joinEvent.gameState!!.players).extracting<String> { it.iconId }
+            .containsExactly("woerthersee", "ironman")
+        assertThat(gameController.getGameState(gameId)!!.players[1].iconId).isEqualTo("ironman")
+
+        creatorSession.disconnect()
+        joinerSession.disconnect()
     }
 
     // ─── Game: action - ROLL_DICE ─────────────────────────────────────────────

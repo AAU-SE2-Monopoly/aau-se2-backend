@@ -17,6 +17,9 @@ class WebSocketBrokerController(
     private val gameController: GameController
 ) {
 
+    private fun normalizeIconId(iconId: String?): String =
+        iconId?.takeIf { it.isNotBlank() } ?: "lindwurm"
+
     /** CREATE – any client sends a player name; server creates a game and responds. */
     @MessageMapping("/game/create")
     fun createGame(player: Player) {
@@ -50,7 +53,8 @@ class WebSocketBrokerController(
             }
         val player = Player(
             id = action.playerId,
-            name = action.payload["name"] ?: action.playerId
+            name = action.payload["name"] ?: action.playerId,
+            iconId = normalizeIconId(action.payload["iconId"])
         )
         gameController.joinGame(action.gameId, player)
         messagingTemplate.convertAndSend(

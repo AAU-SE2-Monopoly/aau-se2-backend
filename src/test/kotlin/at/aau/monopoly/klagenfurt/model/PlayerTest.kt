@@ -11,6 +11,7 @@ class PlayerTest {
 
         assertEquals("1", player.id)
         assertEquals("Max", player.name)
+        assertEquals("lindwurm", player.iconId)
         assertEquals(0, player.position)
         assertEquals(1500, player.money)
         assertFalse(player.inJail)
@@ -23,6 +24,7 @@ class PlayerTest {
     fun `player should allow modifying properties`() {
         val player = Player(id = "1", name = "Max")
 
+        player.iconId = "gti"
         player.position = 10
         player.money = 1200
         player.inJail = true
@@ -30,6 +32,7 @@ class PlayerTest {
         player.getOutOfJailCards = 1
         player.ownedPropertyIds.add(5)
 
+        assertEquals("gti", player.iconId)
         assertEquals(10, player.position)
         assertEquals(1200, player.money)
         assertTrue(player.inJail)
