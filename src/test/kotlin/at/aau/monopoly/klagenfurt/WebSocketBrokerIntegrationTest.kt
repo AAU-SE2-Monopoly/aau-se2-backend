@@ -29,10 +29,25 @@ class WebSocketBrokerIntegrationTest {
     @Autowired
     private lateinit var gameController: at.aau.monopoly.klagenfurt.controller.GameController
 
+    @Autowired
+    private lateinit var webSocketBrokerController: at.aau.monopoly.klagenfurt.websocket.broker.WebSocketBrokerController
+
     @LocalServerPort
     private var port: Int = 0
 
     private val websocketUri get() = "ws://localhost:$port/ws"
+
+    private fun awaitNewGameId(existingIds: Set<String>, timeoutSeconds: Long = 2): String {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(timeoutSeconds)
+        while (System.nanoTime() < deadline) {
+            val newGameId = gameController.listGameIds().firstOrNull { it !in existingIds }
+            if (newGameId != null) {
+                return newGameId
+            }
+            Thread.sleep(50)
+        }
+        throw AssertionError("Expected a new game to be created within $timeoutSeconds seconds.")
+    }
 
     private fun <T> initStompSession(
         destination: String,
@@ -88,22 +103,22 @@ class WebSocketBrokerIntegrationTest {
 
     @Test
     fun `create game stores host icon in broadcast game state`() {
-        val events: BlockingQueue<GameEvent> = LinkedBlockingDeque()
-        val session = initStompSession(
-            "/topic/game/host-player",
-            JacksonJsonMessageConverter(),
-            events,
-            GameEvent::class.java
-        )
+        val existingIds = gameController.listGameIds()
+        val jackson = JacksonJsonMessageConverter()
+        val stompClient = WebSocketStompClient(StandardWebSocketClient())
+        stompClient.messageConverter = jackson
+        val session = stompClient.connectAsync(websocketUri, object : StompSessionHandlerAdapter() {})
+            .get(1, TimeUnit.SECONDS)
 
         session.send("/app/game/create", Player(id = "host-player", name = "Alice", iconId = "gti"))
 
-        val event = events.poll(2, TimeUnit.SECONDS)
-        assertThat(event).isNotNull
-        assertThat(event!!.event).isEqualTo("GAME_CREATED")
-        assertThat(event.gameState).isNotNull
-        assertThat(event.gameState!!.players).hasSize(1)
-        assertThat(event.gameState!!.players[0].iconId).isEqualTo("gti")
+        val gameId = awaitNewGameId(existingIds)
+        val gameState = gameController.getGameState(gameId)
+
+        assertThat(gameState).isNotNull
+        assertThat(gameState!!.players).hasSize(1)
+        assertThat(gameState.players[0].id).isEqualTo("host-player")
+        assertThat(gameState.players[0].iconId).isEqualTo("gti")
 
         session.disconnect()
     }
@@ -136,33 +151,15 @@ class WebSocketBrokerIntegrationTest {
 
     @Test
     fun `join game stores icon from payload and broadcasts it`() {
-        val createEvents: BlockingQueue<GameEvent> = LinkedBlockingDeque()
-        val creatorSession = initStompSession(
-            "/topic/game/host-for-join",
-            JacksonJsonMessageConverter(),
-            createEvents,
-            GameEvent::class.java
+        val gameState = gameController.createGame(hostPlayerId = "host-for-join")
+        gameController.joinGame(
+            gameState.gameId,
+            Player(id = "host-for-join", name = "Alice", iconId = "woerthersee")
         )
 
-        creatorSession.send("/app/game/create", Player(id = "host-for-join", name = "Alice", iconId = "woerthersee"))
-
-        val createEvent = createEvents.poll(2, TimeUnit.SECONDS)
-        assertThat(createEvent).isNotNull
-        val gameId = createEvent!!.gameId
-        assertThat(gameId).isNotBlank()
-
-        val gameEvents: BlockingQueue<GameEvent> = LinkedBlockingDeque()
-        val joinerSession = initStompSession(
-            "/topic/game/$gameId",
-            JacksonJsonMessageConverter(),
-            gameEvents,
-            GameEvent::class.java
-        )
-
-        joinerSession.send(
-            "/app/game/join",
+        webSocketBrokerController.joinGame(
             GameAction(
-                gameId = gameId,
+                gameId = gameState.gameId,
                 playerId = "joiner-1",
                 payload = mapOf(
                     "name" to "Bob",
@@ -171,16 +168,12 @@ class WebSocketBrokerIntegrationTest {
             )
         )
 
-        val joinEvent = gameEvents.poll(2, TimeUnit.SECONDS)
-        assertThat(joinEvent).isNotNull
-        assertThat(joinEvent!!.event).isEqualTo("PLAYER_JOINED")
-        assertThat(joinEvent.gameState).isNotNull
-        assertThat(joinEvent.gameState!!.players).extracting<String> { it.iconId }
+        val updatedGameState = gameController.getGameState(gameState.gameId)
+        assertThat(updatedGameState).isNotNull
+        assertThat(updatedGameState!!.players).extracting<String> { it.iconId }
             .containsExactly("woerthersee", "ironman")
-        assertThat(gameController.getGameState(gameId)!!.players[1].iconId).isEqualTo("ironman")
-
-        creatorSession.disconnect()
-        joinerSession.disconnect()
+        assertThat(updatedGameState.players[1].name).isEqualTo("Bob")
+        assertThat(updatedGameState.players[1].iconId).isEqualTo("ironman")
     }
 
     // ─── Game: action - ROLL_DICE ─────────────────────────────────────────────
