@@ -6,6 +6,7 @@ import com.fasterxml.jackson.annotation.Nulls
 data class Player(
     val id: String,
     var name: String,
+    @JsonSetter(nulls = Nulls.SKIP) var iconId: String = "lindwurm",
     @JsonSetter(nulls = Nulls.SKIP) var position: Int = 0,
     @JsonSetter(nulls = Nulls.SKIP) var money: Int = 1500,
     @JsonSetter(nulls = Nulls.SKIP) var inJail: Boolean = false,
@@ -16,4 +17,3 @@ data class Player(
     /** Returns true if the player is bankrupt (no money and no properties). */
     fun isBankrupt(): Boolean = money <= 0 && ownedPropertyIds.isEmpty()
 }
-

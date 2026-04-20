@@ -31,6 +31,19 @@ class GameControllerTest {
         assertEquals(1, updatedGame.players.size)
         assertEquals("Alice", updatedGame.players[0].name)
         assertEquals("1", updatedGame.players[0].id)
+        assertEquals("lindwurm", updatedGame.players[0].iconId)
+    }
+
+    @Test
+    fun `joinGame should retain provided player icon`() {
+        val controller = GameController()
+        val game = controller.createGame()
+        val player = Player(id = "1", name = "Alice", iconId = "ironman")
+
+        val updatedGame = controller.joinGame(game.gameId, player)
+
+        assertEquals(1, updatedGame.players.size)
+        assertEquals("ironman", updatedGame.players[0].iconId)
     }
 
     @Test
@@ -204,5 +217,17 @@ class GameControllerTest {
         val openGames = controller.listOpenGames()
 
         assertTrue(openGames.isEmpty())
+    }
+
+    @Test
+    fun `listOpenGames should use Unknown when host has not joined yet`() {
+        val controller = GameController()
+        val game = controller.createGame(hostPlayerId = "host-1")
+
+        val openGames = controller.listOpenGames()
+
+        assertEquals(1, openGames.size)
+        assertEquals(game.gameId, openGames[0].gameId)
+        assertEquals("Unknown", openGames[0].hostPlayerName)
     }
 }

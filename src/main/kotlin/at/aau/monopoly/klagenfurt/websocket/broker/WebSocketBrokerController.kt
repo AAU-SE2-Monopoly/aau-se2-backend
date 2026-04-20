@@ -17,11 +17,15 @@ class WebSocketBrokerController(
     private val gameController: GameController
 ) {
 
+    private fun normalizeIconId(iconId: String?): String =
+        iconId?.takeIf { it.isNotBlank() } ?: "lindwurm"
+
     /** CREATE – any client sends a player name; server creates a game and responds. */
     @MessageMapping("/game/create")
     fun createGame(player: Player) {
-        val gameState = gameController.createGame(hostPlayerId = player.id)
-        gameController.joinGame(gameState.gameId, player)
+        val hostPlayer = player.copy(iconId = normalizeIconId(player.iconId))
+        val gameState = gameController.createGame(hostPlayerId = hostPlayer.id)
+        gameController.joinGame(gameState.gameId, hostPlayer)
         val event = GameEvent(
             gameId = gameState.gameId,
             event = "GAME_CREATED",
@@ -32,7 +36,7 @@ class WebSocketBrokerController(
         messagingTemplate.convertAndSend("/topic/game/${gameState.gameId}", event)
         // Also send to the player's temporary topic so the creator receives the gameId
         // even though they couldn't subscribe to the real topic before it was known.
-        messagingTemplate.convertAndSend("/topic/game/${player.id}", event)
+        messagingTemplate.convertAndSend("/topic/game/${hostPlayer.id}", event)
         // Broadcast updated lobby list so all clients in the lobby see the new game
         broadcastLobby()
     }
@@ -50,7 +54,8 @@ class WebSocketBrokerController(
             }
         val player = Player(
             id = action.playerId,
-            name = action.payload["name"] ?: action.playerId
+            name = action.payload["name"] ?: action.playerId,
+            iconId = normalizeIconId(action.payload["iconId"])
         )
         gameController.joinGame(action.gameId, player)
         messagingTemplate.convertAndSend(

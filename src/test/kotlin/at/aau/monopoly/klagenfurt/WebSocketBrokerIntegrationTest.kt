@@ -7,6 +7,7 @@ import at.aau.monopoly.klagenfurt.websocket.StompFrameHandlerClientImpl
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
+import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.web.server.LocalServerPort
 import org.springframework.messaging.converter.JacksonJsonMessageConverter
@@ -25,10 +26,28 @@ import java.util.concurrent.TimeUnit
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class WebSocketBrokerIntegrationTest {
 
+    @Autowired
+    private lateinit var gameController: at.aau.monopoly.klagenfurt.controller.GameController
+
+    @Autowired
+    private lateinit var webSocketBrokerController: at.aau.monopoly.klagenfurt.websocket.broker.WebSocketBrokerController
+
     @LocalServerPort
     private var port: Int = 0
 
     private val websocketUri get() = "ws://localhost:$port/ws"
+
+    private fun awaitNewGameId(existingIds: Set<String>, timeoutSeconds: Long = 2): String {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(timeoutSeconds)
+        while (System.nanoTime() < deadline) {
+            val newGameId = gameController.listGameIds().firstOrNull { it !in existingIds }
+            if (newGameId != null) {
+                return newGameId
+            }
+            Thread.sleep(50)
+        }
+        throw AssertionError("Expected a new game to be created within $timeoutSeconds seconds.")
+    }
 
     private fun <T> initStompSession(
         destination: String,
@@ -82,6 +101,28 @@ class WebSocketBrokerIntegrationTest {
         session.disconnect()
     }
 
+    @Test
+    fun `create game stores host icon in broadcast game state`() {
+        val existingIds = gameController.listGameIds()
+        val jackson = JacksonJsonMessageConverter()
+        val stompClient = WebSocketStompClient(StandardWebSocketClient())
+        stompClient.messageConverter = jackson
+        val session = stompClient.connectAsync(websocketUri, object : StompSessionHandlerAdapter() {})
+            .get(1, TimeUnit.SECONDS)
+
+        session.send("/app/game/create", Player(id = "host-player", name = "Alice", iconId = "gti"))
+
+        val gameId = awaitNewGameId(existingIds)
+        val gameState = gameController.getGameState(gameId)
+
+        assertThat(gameState).isNotNull
+        assertThat(gameState!!.players).hasSize(1)
+        assertThat(gameState.players[0].id).isEqualTo("host-player")
+        assertThat(gameState.players[0].iconId).isEqualTo("gti")
+
+        session.disconnect()
+    }
+
     // ─── Game: full flow with known gameId ───────────────────────────────────
 
     @Test
@@ -106,6 +147,33 @@ class WebSocketBrokerIntegrationTest {
         // Real end-to-end game flow tests are better done via a shared GameController @Autowired.
 
         sessionA.disconnect()
+    }
+
+    @Test
+    fun `join game stores icon from payload and broadcasts it`() {
+        val gameState = gameController.createGame(hostPlayerId = "host-for-join")
+        gameController.joinGame(
+            gameState.gameId,
+            Player(id = "host-for-join", name = "Alice", iconId = "woerthersee")
+        )
+
+        webSocketBrokerController.joinGame(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "joiner-1",
+                payload = mapOf(
+                    "name" to "Bob",
+                    "iconId" to "ironman"
+                )
+            )
+        )
+
+        val updatedGameState = gameController.getGameState(gameState.gameId)
+        assertThat(updatedGameState).isNotNull
+        assertThat(updatedGameState!!.players).extracting<String> { it.iconId }
+            .containsExactly("woerthersee", "ironman")
+        assertThat(updatedGameState.players[1].name).isEqualTo("Bob")
+        assertThat(updatedGameState.players[1].iconId).isEqualTo("ironman")
     }
 
     // ─── Game: action - ROLL_DICE ─────────────────────────────────────────────
