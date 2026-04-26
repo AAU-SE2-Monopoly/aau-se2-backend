@@ -1,0 +1,7 @@
+services:
+  server:
+    image: ghcr.io/aau-se2-monopoly/aau-se2-backend:latest
+    restart: unless-stopped
+    ports:
+      - "53208:8080"
+

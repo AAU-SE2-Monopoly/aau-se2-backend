@@ -41,6 +41,10 @@ dependencies {
     testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine")
 }
 
+tasks.named<Jar>("jar") {
+    enabled = false
+}
+
 tasks.withType<Test> {
     useJUnitPlatform()
 
