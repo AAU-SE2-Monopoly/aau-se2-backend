@@ -114,11 +114,39 @@ class WebSocketBrokerController(
 
         when (action.action) {
             "ROLL_DICE" -> {
+                if (gameState.currentPlayer?.id != action.playerId) {
+                    messagingTemplate.convertAndSend(
+                        "/topic/game/${action.gameId}",
+                        GameEvent(
+                            gameId = action.gameId,
+                            event = "ERROR",
+                            gameState = gameState,
+                            message = "It is not your turn."
+                        )
+                    )
+                    return
+                }
+
+                if (gameState.phase != GamePhase.ROLLING) {
+                    messagingTemplate.convertAndSend(
+                        "/topic/game/${action.gameId}",
+                        GameEvent(
+                            gameId = action.gameId,
+                            event = "ERROR",
+                            gameState = gameState,
+                            message = "Dice can only be rolled during the rolling phase."
+                        )
+                    )
+                    return
+                }
+
                 val die1 = (1..6).random()
                 val die2 = (1..6).random()
                 val roll = DiceRoll(die1, die2)
+
                 gameState.lastDiceRoll = roll
                 gameState.phase = GamePhase.BUYING
+
                 messagingTemplate.convertAndSend(
                     "/topic/game/${action.gameId}",
                     GameEvent(
