@@ -103,6 +103,7 @@ class WebSocketBrokerController(
      */
     @MessageMapping("/game/action")
     fun handleAction(action: GameAction) {
+        println("DiceDebug backend action=${action.action} gameId=${action.gameId} playerId=${action.playerId}")
         val gameState = gameController.getGameState(action.gameId)
             ?: run {
                 messagingTemplate.convertAndSend(
@@ -114,6 +115,7 @@ class WebSocketBrokerController(
 
         when (action.action) {
             "ROLL_DICE" -> {
+                println("DiceDebug backend ROLL_DICE currentPlayer=${gameState.currentPlayer?.id} phase=${gameState.phase}")
                 if (gameState.currentPlayer?.id != action.playerId) {
                     messagingTemplate.convertAndSend(
                         "/topic/game/${action.gameId}",
