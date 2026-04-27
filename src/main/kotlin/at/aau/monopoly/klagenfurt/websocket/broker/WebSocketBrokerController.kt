@@ -104,8 +104,10 @@ class WebSocketBrokerController(
     @MessageMapping("/game/action")
     fun handleAction(action: GameAction) {
         println("DiceDebug backend action=${action.action} gameId=${action.gameId} playerId=${action.playerId}")
+        println("DiceDebug backend action='${action.action}' length=${action.action.length}")
         val gameState = gameController.getGameState(action.gameId)
             ?: run {
+                println("DiceDebug backend ERROR game not found for gameId=${action.gameId}")
                 messagingTemplate.convertAndSend(
                     "/topic/game/${action.gameId}",
                     GameEvent(gameId = action.gameId, event = "ERROR", message = "Game not found.")
