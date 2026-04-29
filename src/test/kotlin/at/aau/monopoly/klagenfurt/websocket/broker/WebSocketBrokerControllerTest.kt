@@ -142,8 +142,10 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        // Start the game to set phase to ROLLING
+        gameState.advanceTurn()
 
-        controller.handleAction(GameAction(gameId = gameState.gameId, action = "ROLL_DICE"))
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "ROLL_DICE"))
 
         val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
 
@@ -162,7 +164,7 @@ class WebSocketBrokerControllerTest {
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
         gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
 
-        controller.handleAction(GameAction(gameId = gameState.gameId, action = "END_TURN"))
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "END_TURN"))
 
         val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
 
