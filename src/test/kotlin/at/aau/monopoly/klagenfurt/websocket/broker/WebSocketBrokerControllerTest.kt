@@ -35,6 +35,18 @@ class WebSocketBrokerControllerTest {
         return destinationCaptor.allValues.zip(payloadCaptor.allValues)
     }
 
+    private fun captureLastMessages(
+        messagingTemplate: SimpMessagingTemplate,
+        count: Int
+    ): List<Pair<String, Any>> {
+        val destinationCaptor = ArgumentCaptor.forClass(String::class.java)
+        val payloadCaptor = ArgumentCaptor.forClass(Any::class.java)
+        Mockito.verify(messagingTemplate, Mockito.atLeastOnce())
+            .convertAndSend(destinationCaptor.capture(), payloadCaptor.capture())
+        val allMessages = destinationCaptor.allValues.zip(payloadCaptor.allValues)
+        return allMessages.takeLast(count)
+    }
+
     @Test
     fun `createGame should broadcast created event to game topics and lobby`() {
         val (controller, gameController, messagingTemplate) = createController()
@@ -142,8 +154,10 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        // Start the game to set phase to ROLLING
+        gameState.advanceTurn()
 
-        controller.handleAction(GameAction(gameId = gameState.gameId, action = "ROLL_DICE"))
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "ROLL_DICE"))
 
         val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
 
@@ -162,7 +176,7 @@ class WebSocketBrokerControllerTest {
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
         gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
 
-        controller.handleAction(GameAction(gameId = gameState.gameId, action = "END_TURN"))
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "END_TURN"))
 
         val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
 
@@ -258,5 +272,235 @@ class WebSocketBrokerControllerTest {
 
         assertEquals("ERROR", event.event)
         assertTrue(event.message!!.contains("Only the host"))
+    }
+
+
+    @Test
+    fun `handleAction ROLL_DICE should emit error when not in ROLLING phase`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.advanceTurn()
+        // Manually set to BUYING phase
+        gameState.phase = GamePhase.BUYING
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "ROLL_DICE"))
+
+        val messages = captureLastMessages(messagingTemplate, 1)
+        val event = messages.single().second as GameEvent
+
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("Dice can only be rolled during the rolling phase"))
+    }
+
+    @Test
+    fun `joinGame should use custom name and icon from payload`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+
+        controller.joinGame(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "player-2",
+                payload = mapOf("name" to "CustomBob", "iconId" to "gti")
+            )
+        )
+
+        val messages = captureLastMessages(messagingTemplate, 2)
+        val gameEvent = messages.first { it.first == "/topic/game/${gameState.gameId}" }.second as GameEvent
+
+        assertEquals("PLAYER_JOINED", gameEvent.event)
+        assertEquals("CustomBob", gameEvent.gameState!!.players[1].name)
+        assertEquals("gti", gameEvent.gameState!!.players[1].iconId)
+    }
+
+    @Test
+    fun `createGame should normalize blank iconId to default`() {
+        val (controller, gameController, messagingTemplate) = createController()
+
+        controller.createGame(Player(id = "host-1", name = "Alice", iconId = "   "))
+
+        val gameId = gameController.listGameIds().single()
+        val messages = captureMessages(messagingTemplate, 3)
+
+        val gameEvent = messages.first { it.first == "/topic/game/$gameId" }.second as GameEvent
+        assertEquals("lindwurm", gameEvent.gameState!!.players.single().iconId)
+    }
+
+    @Test
+    fun `listGames broadcasts to lobby topic`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val game1 = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(game1.gameId, Player(id = "host-1", name = "Alice"))
+
+        controller.listGames(GameAction())
+
+        val messages = captureMessages(messagingTemplate, 1)
+        assertEquals("/topic/lobby", messages.single().first)
+        val lobbyEvent = messages.single().second as LobbyEvent
+        assertEquals("LOBBY_UPDATE", lobbyEvent.event)
+        assertEquals(1, lobbyEvent.games.size)
+    }
+
+    @Test
+    fun `handleAction should broadcast last dice roll with both dice values`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.advanceTurn()
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "ROLL_DICE"))
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+        assertNotNull(event.gameState!!.lastDiceRoll)
+        assertEquals(GamePhase.BUYING, event.gameState!!.phase)
+        assertTrue(event.message!!.contains("rolled"))
+        assertTrue(event.message!!.contains("="))
+    }
+
+    @Test
+    fun `getGameState returns full game state with all players`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-3", name = "Charlie"))
+
+        controller.getGameState(GameAction(gameId = gameState.gameId))
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("STATE_SNAPSHOT", event.event)
+        assertEquals(3, event.gameState!!.players.size)
+        assertEquals("Alice", event.gameState!!.players[0].name)
+        assertEquals("Bob", event.gameState!!.players[1].name)
+        assertEquals("Charlie", event.gameState!!.players[2].name)
+    }
+
+    @Test
+    fun `createGame initializes board with 40 fields`() {
+        val (controller, gameController, messagingTemplate) = createController()
+
+        controller.createGame(Player(id = "host-1", name = "Alice"))
+
+        val gameId = gameController.listGameIds().single()
+        val gameState = gameController.getGameState(gameId)
+        assertEquals(40, gameState!!.fields.size)
+        assertEquals(0, gameState.currentPlayerIndex)
+    }
+
+    @Test
+    fun `joinGame should include player in game state event`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+
+        controller.joinGame(GameAction(gameId = gameState.gameId, playerId = "player-2", payload = mapOf("name" to "Bob")))
+
+        val messages = captureMessages(messagingTemplate, 2)
+        val gameEvent = messages.first { it.first == "/topic/game/${gameState.gameId}" }.second as GameEvent
+        assertEquals(2, gameEvent.gameState!!.players.size)
+        assertTrue(gameEvent.message!!.contains("Bob joined"))
+    }
+
+    @Test
+    fun `handleAction ROLL_DICE should emit error when player is not current player`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+
+        gameState.advanceTurn()
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "wrong-player",
+                action = "ROLL_DICE"
+            )
+        )
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ERROR", event.event)
+        assertEquals(gameState, event.gameState)
+        assertTrue(event.message!!.contains("It is not your turn"))
+    }
+
+    @Test
+    fun `joinGame should normalize blank icon from payload to default`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+
+        controller.joinGame(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "player-2",
+                payload = mapOf(
+                    "name" to "Bob",
+                    "iconId" to "   "
+                )
+            )
+        )
+
+        val messages = captureMessages(messagingTemplate, 2)
+        val event = messages.first { it.first == "/topic/game/${gameState.gameId}" }.second as GameEvent
+
+        assertEquals("PLAYER_JOINED", event.event)
+        assertEquals("Bob", event.gameState!!.players[1].name)
+        assertEquals("lindwurm", event.gameState!!.players[1].iconId)
+    }
+
+    @Test
+    fun `createGame should preserve non blank iconId`() {
+        val (controller, gameController, messagingTemplate) = createController()
+
+        controller.createGame(Player(id = "host-1", name = "Alice", iconId = "gti"))
+
+        val gameId = gameController.listGameIds().single()
+        val messages = captureMessages(messagingTemplate, 3)
+
+        val event = messages.first { it.first == "/topic/game/$gameId" }.second as GameEvent
+
+        assertEquals("GAME_CREATED", event.event)
+        assertEquals("gti", event.gameState!!.players.single().iconId)
+    }
+
+    @Test
+    fun `startGame should remove game from open lobby list`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+
+        controller.startGame(GameAction(gameId = gameState.gameId))
+
+        val messages = captureMessages(messagingTemplate, 2)
+        val lobbyEvent = messages.first { it.first == "/topic/lobby" }.second as LobbyEvent
+
+        assertEquals("LOBBY_UPDATE", lobbyEvent.event)
+        assertTrue(lobbyEvent.games.none { it.gameId == gameState.gameId })
+    }
+
+    @Test
+    fun `handleAction END_TURN should not check player ownership`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "not-current-player",
+                action = "END_TURN"
+            )
+        )
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("TURN_ENDED", event.event)
+        assertEquals("Bob", event.gameState!!.currentPlayer!!.name)
     }
 }
