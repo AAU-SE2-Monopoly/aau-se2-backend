@@ -4,7 +4,6 @@ import at.aau.monopoly.klagenfurt.messaging.dtos.GameLobbyInfo
 import at.aau.monopoly.klagenfurt.model.BoardFactory
 import at.aau.monopoly.klagenfurt.model.GameState
 import at.aau.monopoly.klagenfurt.model.Player
-import at.aau.monopoly.klagenfurt.model.enums.GamePhase
 import org.springframework.stereotype.Service
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -85,12 +84,12 @@ class GameController {
     fun listGameIds(): Set<String> = games.keys.toSet()
 
     /**
-     * Returns a list of [GameLobbyInfo] for all games that are still in the WAITING phase
-     * (i.e. open for joining).
+     * Returns a list of [GameLobbyInfo] for all active games, regardless of phase.
+     * Games in WAITING phase are open for joining; others are already started.
+     * The frontend can use the [GameLobbyInfo.phase] field to show a "STARTED" indicator.
      */
-    fun listOpenGames(): List<GameLobbyInfo> =
+    fun listAllGames(): List<GameLobbyInfo> =
         games.values
-            .filter { it.phase == GamePhase.WAITING }
             .map { game ->
                 val hostName = game.players.firstOrNull { it.id == game.hostPlayerId }?.name ?: "Unknown"
                 GameLobbyInfo(
