@@ -57,7 +57,20 @@ class WebSocketBrokerController(
             name = action.payload["name"] ?: action.playerId,
             iconId = normalizeIconId(action.payload["iconId"])
         )
-        gameController.joinGame(action.gameId, player)
+        try {
+            gameController.joinGame(action.gameId, player)
+        } catch (e: IllegalArgumentException) {
+            messagingTemplate.convertAndSend(
+                "/topic/game/${action.gameId}",
+                GameEvent(
+                    gameId = action.gameId,
+                    event = "ERROR",
+                    gameState = gameState,
+                    message = e.message ?: "Cannot join game."
+                )
+            )
+            return
+        }
         messagingTemplate.convertAndSend(
             "/topic/game/${action.gameId}",
             GameEvent(
@@ -199,16 +212,16 @@ class WebSocketBrokerController(
         )
     }
 
-    /** LIST – client requests the list of all open (WAITING) games. */
+    /** LIST – client requests the list of all active games. */
     @MessageMapping("/game/list")
     @Suppress("UNUSED_PARAMETER")
     fun listGames(action: GameAction) {
-        val openGames = gameController.listOpenGames()
+        val allGames = gameController.listAllGames()
         messagingTemplate.convertAndSend(
             "/topic/lobby",
             LobbyEvent(
                 event = "LOBBY_UPDATE",
-                games = openGames
+                games = allGames
             )
         )
     }
@@ -244,7 +257,7 @@ class WebSocketBrokerController(
 
     /** Broadcasts the current open-game list to all lobby subscribers. */
     private fun broadcastLobby() {
-        val openGames = gameController.listOpenGames()
+        val openGames = gameController.listAllGames()
         messagingTemplate.convertAndSend(
             "/topic/lobby",
             LobbyEvent(
