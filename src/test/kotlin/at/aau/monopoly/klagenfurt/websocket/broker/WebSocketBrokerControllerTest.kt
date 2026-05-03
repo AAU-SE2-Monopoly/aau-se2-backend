@@ -93,7 +93,7 @@ class WebSocketBrokerControllerTest {
             GameAction(
                 gameId = gameState.gameId,
                 playerId = "player-2",
-                payload = emptyMap()
+                payload = mutableMapOf<String, String>()
             )
         )
 
@@ -103,7 +103,7 @@ class WebSocketBrokerControllerTest {
 
         assertEquals("PLAYER_JOINED", gameEvent.event)
         assertEquals("player-2", gameEvent.gameState!!.players[1].name)
-        assertEquals("lindwurm", gameEvent.gameState!!.players[1].iconId)
+        assertEquals("lindwurm", gameEvent.gameState.players[1].iconId)
         assertEquals(2, lobbyEvent.games.single().playerCount)
     }
 
@@ -303,7 +303,7 @@ class WebSocketBrokerControllerTest {
             GameAction(
                 gameId = gameState.gameId,
                 playerId = "player-2",
-                payload = mapOf("name" to "CustomBob", "iconId" to "gti")
+                payload = mutableMapOf("name" to "CustomBob", "iconId" to "gti")
             )
         )
 
@@ -312,7 +312,7 @@ class WebSocketBrokerControllerTest {
 
         assertEquals("PLAYER_JOINED", gameEvent.event)
         assertEquals("CustomBob", gameEvent.gameState!!.players[1].name)
-        assertEquals("gti", gameEvent.gameState!!.players[1].iconId)
+        assertEquals("gti", gameEvent.gameState.players[1].iconId)
     }
 
     @Test
@@ -354,9 +354,9 @@ class WebSocketBrokerControllerTest {
 
         val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
         assertNotNull(event.gameState!!.lastDiceRoll)
-        assertEquals(GamePhase.BUYING, event.gameState!!.phase)
+        assertEquals(GamePhase.BUYING, event.gameState.phase)
         assertTrue(event.message!!.contains("rolled"))
-        assertTrue(event.message!!.contains("="))
+        assertTrue(event.message.contains("="))
     }
 
     @Test
@@ -372,14 +372,14 @@ class WebSocketBrokerControllerTest {
         val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
         assertEquals("STATE_SNAPSHOT", event.event)
         assertEquals(3, event.gameState!!.players.size)
-        assertEquals("Alice", event.gameState!!.players[0].name)
-        assertEquals("Bob", event.gameState!!.players[1].name)
-        assertEquals("Charlie", event.gameState!!.players[2].name)
+        assertEquals("Alice", event.gameState.players[0].name)
+        assertEquals("Bob", event.gameState.players[1].name)
+        assertEquals("Charlie", event.gameState.players[2].name)
     }
 
     @Test
     fun `createGame initializes board with 40 fields`() {
-        val (controller, gameController, messagingTemplate) = createController()
+        val (controller, gameController) = createController().let { it.first to it.second }
 
         controller.createGame(Player(id = "host-1", name = "Alice"))
 
@@ -395,7 +395,7 @@ class WebSocketBrokerControllerTest {
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
 
-        controller.joinGame(GameAction(gameId = gameState.gameId, playerId = "player-2", payload = mapOf("name" to "Bob")))
+        controller.joinGame(GameAction(gameId = gameState.gameId, playerId = "player-2", payload = mutableMapOf("name" to "Bob")))
 
         val messages = captureMessages(messagingTemplate, 2)
         val gameEvent = messages.first { it.first == "/topic/game/${gameState.gameId}" }.second as GameEvent
@@ -437,7 +437,7 @@ class WebSocketBrokerControllerTest {
             GameAction(
                 gameId = gameState.gameId,
                 playerId = "player-2",
-                payload = mapOf(
+                payload = mutableMapOf(
                     "name" to "Bob",
                     "iconId" to "   "
                 )
@@ -449,7 +449,7 @@ class WebSocketBrokerControllerTest {
 
         assertEquals("PLAYER_JOINED", event.event)
         assertEquals("Bob", event.gameState!!.players[1].name)
-        assertEquals("lindwurm", event.gameState!!.players[1].iconId)
+        assertEquals("lindwurm", event.gameState.players[1].iconId)
     }
 
     @Test

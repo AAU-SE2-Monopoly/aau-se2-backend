@@ -84,7 +84,6 @@ class WebSocketBrokerIntegrationTest {
         //
         // For now we verify the round-trip by wiring GameController directly.
 
-        val events: BlockingQueue<GameEvent> = LinkedBlockingDeque()
         val jackson = JacksonJsonMessageConverter()
 
         // Connect without a subscription first
@@ -161,7 +160,8 @@ class WebSocketBrokerIntegrationTest {
             GameAction(
                 gameId = gameState.gameId,
                 playerId = "joiner-1",
-                payload = mapOf(
+                action = "JOIN",
+                payload = mutableMapOf(
                     "name" to "Bob",
                     "iconId" to "ironman"
                 )
