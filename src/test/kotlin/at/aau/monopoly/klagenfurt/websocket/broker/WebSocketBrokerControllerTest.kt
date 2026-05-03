@@ -226,7 +226,7 @@ class WebSocketBrokerControllerTest {
     }
 
     @Test
-    fun `listGames should broadcast waiting games to lobby`() {
+    fun `listGames should broadcast all games to lobby`() {
         val (controller, gameController, messagingTemplate) = createController()
         val waitingGame = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(waitingGame.gameId, Player(id = "host-1", name = "Alice"))
@@ -239,9 +239,9 @@ class WebSocketBrokerControllerTest {
         val lobbyEvent = captureMessages(messagingTemplate, 1).single().second as LobbyEvent
 
         assertEquals("LOBBY_UPDATE", lobbyEvent.event)
-        assertEquals(1, lobbyEvent.games.size)
-        assertEquals(waitingGame.gameId, lobbyEvent.games.single().gameId)
+        assertEquals(2, lobbyEvent.games.size)
     }
+
 
     @Test
     fun `closeGame should broadcast closed event and lobby update`() {
@@ -468,7 +468,7 @@ class WebSocketBrokerControllerTest {
     }
 
     @Test
-    fun `startGame should remove game from open lobby list`() {
+    fun `startGame should update lobby list with current game state`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
@@ -480,8 +480,11 @@ class WebSocketBrokerControllerTest {
         val lobbyEvent = messages.first { it.first == "/topic/lobby" }.second as LobbyEvent
 
         assertEquals("LOBBY_UPDATE", lobbyEvent.event)
-        assertTrue(lobbyEvent.games.none { it.gameId == gameState.gameId })
+        // Game is now started but still appears in lobby (listAllGames returns all games)
+        assertEquals(1, lobbyEvent.games.size)
+        assertEquals(gameState.gameId, lobbyEvent.games.single().gameId)
     }
+
 
     @Test
     fun `handleAction END_TURN should not check player ownership`() {

@@ -192,7 +192,7 @@ class GameControllerTest {
     }
 
     @Test
-    fun `listOpenGames should return only games in WAITING phase`() {
+    fun `listAllGames should return all games`() {
         val controller = GameController()
         val game1 = controller.createGame(hostPlayerId = "host-1")
         controller.joinGame(game1.gameId, Player(id = "host-1", name = "Alice"))
@@ -202,19 +202,22 @@ class GameControllerTest {
         // Start game1 so it leaves WAITING
         controller.getGameState(game1.gameId)!!.advanceTurn()
 
-        val openGames = controller.listOpenGames()
+        val allGames = controller.listAllGames()
 
-        assertEquals(1, openGames.size)
-        assertEquals(game2.gameId, openGames[0].gameId)
-        assertEquals("Bob", openGames[0].hostPlayerName)
-        assertEquals(1, openGames[0].playerCount)
+        assertEquals(2, allGames.size)
+        val game1Info = allGames.first { it.gameId == game1.gameId }
+        assertEquals("Alice", game1Info.hostPlayerName)
+        assertEquals(1, game1Info.playerCount)
+        val game2Info = allGames.first { it.gameId == game2.gameId }
+        assertEquals("Bob", game2Info.hostPlayerName)
+        assertEquals(1, game2Info.playerCount)
     }
 
     @Test
     fun `listOpenGames should return empty when no games exist`() {
         val controller = GameController()
 
-        val openGames = controller.listOpenGames()
+        val openGames = controller.listAllGames()
 
         assertTrue(openGames.isEmpty())
     }
@@ -224,10 +227,10 @@ class GameControllerTest {
         val controller = GameController()
         val game = controller.createGame(hostPlayerId = "host-1")
 
-        val openGames = controller.listOpenGames()
+        val allGames = controller.listAllGames()
 
-        assertEquals(1, openGames.size)
-        assertEquals(game.gameId, openGames[0].gameId)
-        assertEquals("Unknown", openGames[0].hostPlayerName)
+        assertEquals(1, allGames.size)
+        assertEquals(game.gameId, allGames[0].gameId)
+        assertEquals("Unknown", allGames[0].hostPlayerName)
     }
 }
