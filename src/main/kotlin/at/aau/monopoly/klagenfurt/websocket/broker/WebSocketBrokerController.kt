@@ -71,13 +71,15 @@ class WebSocketBrokerController(
             )
             return
         }
+        // Resolve the stored name from gameState (rejoin preserves existing identity)
+        val joinedPlayerName = gameState.players.first { it.id == action.playerId }.name
         messagingTemplate.convertAndSend(
             "/topic/game/${action.gameId}",
             GameEvent(
                 gameId = action.gameId,
                 event = "PLAYER_JOINED",
                 gameState = gameState,
-                message = "${player.name} joined the game."
+                message = "$joinedPlayerName joined the game."
             )
         )
         // Broadcast updated lobby list (player count changed)

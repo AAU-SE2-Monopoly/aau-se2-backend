@@ -4,6 +4,7 @@ import at.aau.monopoly.klagenfurt.messaging.dtos.GameLobbyInfo
 import at.aau.monopoly.klagenfurt.model.BoardFactory
 import at.aau.monopoly.klagenfurt.model.GameState
 import at.aau.monopoly.klagenfurt.model.Player
+import at.aau.monopoly.klagenfurt.model.enums.GamePhase
 import org.springframework.stereotype.Service
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -36,18 +37,37 @@ class GameController {
 
     /**
      * Adds a [player] to an existing game identified by [gameId].
-     * @throws IllegalArgumentException if the game does not exist or is already full.
+     *
+     * *Rejoin logic*: if the player already exists in the game (same [player.id]),
+     * the join is silently accepted — the existing identity and icon are preserved.
+     * This handles WiFi drops during WAITING as well as app restarts during InProgress.
+     *
+     * *Fresh join*: only allowed when the game is in [GamePhase.WAITING].
+     *
+     * @throws IllegalArgumentException if the game does not exist, is not in WAITING
+     *         for a fresh join, or is already full.
      * @return the updated [GameState].
      */
     fun joinGame(gameId: String, player: Player): GameState {
         val gameState = games[gameId]
             ?: throw IllegalArgumentException("Game with id '$gameId' not found.")
+
+        // 1. Rejoin? If player is already registered, silently accept.
+        //    Existing identity (name, icon) wins over any incoming values.
+        if (gameState.players.any { it.id == player.id }) {
+            return gameState
+        }
+
+        // 2. Fresh join — must be WAITING phase.
+        require(gameState.phase == GamePhase.WAITING) {
+            "Cannot join: you are not a participant in this game."
+        }
+
+        // 3. Fresh join — must have room.
         require(gameState.players.size < maxPlayersPerGame) {
             "Game '$gameId' is already full ($maxPlayersPerGame players)."
         }
-        require(gameState.players.none { it.id == player.id }) {
-            "Player '${player.id}' is already in game '$gameId'."
-        }
+
         gameState.players.add(player)
         return gameState
     }
@@ -65,8 +85,11 @@ class GameController {
 
     /**
      * Closes (removes) the game if the requesting [playerId] is the host.
-     * @return the removed [GameState], or null if the game does not exist.
-     * @throws IllegalArgumentException if the player is not the host.
+     * Games that have already started (phase > WAITING) cannot be closed —
+     * this prevents accidental destruction of an in-progress game.
+     * @return the removed [GameState].
+     * @throws IllegalArgumentException if the game does not exist, the player
+     *         is not the host, or the game has already started.
      */
     fun closeGame(gameId: String, playerId: String): GameState {
         val gameState = games[gameId]
@@ -74,6 +97,9 @@ class GameController {
         require(gameState.hostPlayerId == playerId) {
             "Only the host can close the game."
         }
+        require(gameState.phase == GamePhase.WAITING) {
+            "Cannot close a game that has already started."
+    }
         games.remove(gameId)
         return gameState
     }
@@ -101,4 +127,3 @@ class GameController {
                 )
             }
 }
-

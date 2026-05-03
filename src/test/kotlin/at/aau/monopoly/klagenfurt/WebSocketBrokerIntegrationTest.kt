@@ -3,6 +3,7 @@ package at.aau.monopoly.klagenfurt
 import at.aau.monopoly.klagenfurt.messaging.dtos.GameAction
 import at.aau.monopoly.klagenfurt.messaging.dtos.GameEvent
 import at.aau.monopoly.klagenfurt.model.Player
+import at.aau.monopoly.klagenfurt.model.enums.GamePhase
 import at.aau.monopoly.klagenfurt.websocket.StompFrameHandlerClientImpl
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
@@ -130,23 +131,102 @@ class WebSocketBrokerIntegrationTest {
         val jackson = JacksonJsonMessageConverter()
 
         // ---- Session A: creator (Alice) ----
-        val creatorEvents: BlockingQueue<GameEvent> = LinkedBlockingDeque()
+        val alicePlayerId = UUID.randomUUID().toString()
+        val alicePersonalEvents: BlockingQueue<GameEvent> = LinkedBlockingDeque()
 
         val stompClientA = WebSocketStompClient(StandardWebSocketClient())
         stompClientA.messageConverter = jackson
         val sessionA = stompClientA.connectAsync(websocketUri, object : StompSessionHandlerAdapter() {})
-            .get(1, TimeUnit.SECONDS)
+            .get(2, TimeUnit.SECONDS)
 
-        // Subscribe to a lobby-style "creation ack" topic before sending
-        // We use a dedicated per-player reply channel pattern via a unique correlation id
-        val correlationId = UUID.randomUUID().toString()
-        sessionA.subscribe("/topic/lobby/$correlationId", StompFrameHandlerClientImpl(creatorEvents, GameEvent::class.java))
+        // Subscribe to Alice's personal reply topic so she receives GAME_CREATED
+        sessionA.subscribe(
+            "/topic/game/$alicePlayerId",
+            StompFrameHandlerClientImpl(alicePersonalEvents, GameEvent::class.java)
+        )
 
-        // We cannot easily use /topic/game/{uuid} before we know the uuid.
-        // Instead, the test directly validates the STOMP infrastructure compiles and connects.
-        // Real end-to-end game flow tests are better done via a shared GameController @Autowired.
+        // Alice creates a game
+        sessionA.send(
+            "/app/game/create",
+            Player(id = alicePlayerId, name = "Alice", iconId = "gti")
+        )
 
+        val createdEvent = alicePersonalEvents.poll(3, TimeUnit.SECONDS)
+        assertThat(createdEvent).isNotNull
+        assertThat(createdEvent!!.event).isEqualTo("GAME_CREATED")
+        val gameId = createdEvent.gameId
+        assertThat(gameId).isNotBlank()
+        assertThat(createdEvent.gameState).isNotNull
+        assertThat(createdEvent.gameState!!.players).hasSize(1)
+
+        // Now subscribe to the real game topic for further events
+        val gameEventsA: BlockingQueue<GameEvent> = LinkedBlockingDeque()
+        sessionA.subscribe(
+            "/topic/game/$gameId",
+            StompFrameHandlerClientImpl(gameEventsA, GameEvent::class.java)
+        )
+
+        // ---- Session B: joiner (Bob) ----
+        val bobPlayerId = UUID.randomUUID().toString()
+        val gameEventsB: BlockingQueue<GameEvent> = LinkedBlockingDeque()
+
+        val stompClientB = WebSocketStompClient(StandardWebSocketClient())
+        stompClientB.messageConverter = jackson
+        val sessionB = stompClientB.connectAsync(websocketUri, object : StompSessionHandlerAdapter() {})
+            .get(2, TimeUnit.SECONDS)
+        sessionB.subscribe(
+            "/topic/game/$gameId",
+            StompFrameHandlerClientImpl(gameEventsB, GameEvent::class.java)
+        )
+
+        // Bob joins the game
+        sessionB.send(
+            "/app/game/join",
+            GameAction(
+                gameId = gameId,
+                playerId = bobPlayerId,
+                payload = mapOf("name" to "Bob", "iconId" to "ironman")
+            )
+        )
+
+        val joinEventA = gameEventsA.poll(3, TimeUnit.SECONDS)
+        val joinEventB = gameEventsB.poll(3, TimeUnit.SECONDS)
+        assertThat(joinEventA?.event).isEqualTo("PLAYER_JOINED")
+        assertThat(joinEventA?.gameState?.players).hasSize(2)
+        assertThat(joinEventB?.event).isEqualTo("PLAYER_JOINED")
+
+        // Alice starts the game
+        sessionA.send(
+            "/app/game/start",
+            GameAction(gameId = gameId, playerId = alicePlayerId)
+        )
+
+        val startEventA = gameEventsA.poll(3, TimeUnit.SECONDS)
+        val startEventB = gameEventsB.poll(3, TimeUnit.SECONDS)
+        assertThat(startEventA?.event).isEqualTo("GAME_STARTED")
+        assertThat(startEventB?.event).isEqualTo("GAME_STARTED")
+        // After advanceTurn in startGame, next player's turn (Bob, index 1)
+        val currentPlayerId = startEventA!!.gameState!!.currentPlayer?.id
+
+        // The player whose turn it is rolls the dice
+        val rollerSession = if (currentPlayerId == alicePlayerId) sessionA else sessionB
+        rollerSession.send(
+            "/app/game/action",
+            GameAction(gameId = gameId, playerId = currentPlayerId!!, action = "ROLL_DICE")
+        )
+
+        val diceEventA = gameEventsA.poll(3, TimeUnit.SECONDS)
+        val diceEventB = gameEventsB.poll(3, TimeUnit.SECONDS)
+        assertThat(diceEventA?.event).isEqualTo("DICE_ROLLED")
+        assertThat(diceEventB?.event).isEqualTo("DICE_ROLLED")
+        assertThat(diceEventA?.gameState?.lastDiceRoll).isNotNull
+        val rollTotal = diceEventA!!.gameState!!.lastDiceRoll!!.total
+        assertThat(rollTotal).isBetween(2, 12)
+        assertThat(diceEventA.gameState!!.phase).isEqualTo(GamePhase.BUYING)
+
+        // Cleanup
         sessionA.disconnect()
+        sessionB.disconnect()
     }
 
     @Test
