@@ -503,4 +503,63 @@ class WebSocketBrokerControllerTest {
         assertEquals("TURN_ENDED", event.event)
         assertEquals("Bob", event.gameState!!.currentPlayer!!.name)
     }
+
+    @Test
+    fun `handleAction ROLL_DICE with cheat payload true should force double six`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+
+        // Spiel starten/Runde voranschreiten lassen (Phase = ROLLING)
+        gameState.advanceTurn()
+
+        // Act: Aktion mit Cheat-Flag senden
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "ROLL_DICE",
+                payload = mutableMapOf("cheat" to "true")
+            )
+        )
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+
+        // Assert: Prüfen, ob der If-Zweig (die1=6, die2=6) ausgeführt wurde
+        assertEquals("DICE_ROLLED", event.event)
+        assertEquals(GamePhase.BUYING, gameState.phase)
+        assertNotNull(gameState.lastDiceRoll)
+
+        assertEquals(6, gameState.lastDiceRoll!!.die1, "Die 1 muss bei Cheat exakt 6 sein")
+        assertEquals(6, gameState.lastDiceRoll!!.die2, "Die 2 muss bei Cheat exakt 6 sein")
+    }
+
+    @Test
+    fun `handleAction ROLL_DICE with explicit cheat false should roll normal dice`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+
+        // Spiel starten/Runde voranschreiten lassen (Phase = ROLLING)
+        gameState.advanceTurn()
+
+        // Act: Aktion mit explizitem Cheat = false senden
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "ROLL_DICE",
+                payload = mutableMapOf("cheat" to "false")
+            )
+        )
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+
+        // Assert: Prüfen, ob der Else-Zweig (Zufall 1..6) ausgeführt wurde
+        assertEquals("DICE_ROLLED", event.event)
+        assertNotNull(gameState.lastDiceRoll)
+
+        assertTrue(gameState.lastDiceRoll!!.die1 in 1..6, "Die 1 muss zwischen 1 und 6 liegen")
+        assertTrue(gameState.lastDiceRoll!!.die2 in 1..6, "Die 2 muss zwischen 1 und 6 liegen")
+    }
 }
