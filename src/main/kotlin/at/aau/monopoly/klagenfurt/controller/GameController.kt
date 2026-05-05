@@ -123,7 +123,8 @@ class GameController {
                     hostPlayerName = hostName,
                     playerCount = game.players.size,
                     maxPlayers = maxPlayersPerGame,
-                    phase = game.phase
+                    phase = game.phase,
+                    playerIds = game.players.map { it.id }
                 )
             }
 }

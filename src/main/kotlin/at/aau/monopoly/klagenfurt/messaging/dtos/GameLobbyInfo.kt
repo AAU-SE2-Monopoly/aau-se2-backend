@@ -11,6 +11,7 @@ data class GameLobbyInfo(
     val hostPlayerName: String = "",
     val playerCount: Int = 0,
     val maxPlayers: Int = 6,
-    val phase: GamePhase = GamePhase.WAITING
+    val phase: GamePhase = GamePhase.WAITING,
+    val playerIds: List<String> = emptyList()
 )
 

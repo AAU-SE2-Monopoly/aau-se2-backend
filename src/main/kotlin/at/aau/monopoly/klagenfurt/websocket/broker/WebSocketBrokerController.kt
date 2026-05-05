@@ -7,9 +7,12 @@ import at.aau.monopoly.klagenfurt.messaging.dtos.LobbyEvent
 import at.aau.monopoly.klagenfurt.model.DiceRoll
 import at.aau.monopoly.klagenfurt.model.Player
 import at.aau.monopoly.klagenfurt.model.enums.GamePhase
+import org.slf4j.LoggerFactory
+import org.springframework.context.event.EventListener
 import org.springframework.messaging.handler.annotation.MessageMapping
 import org.springframework.messaging.simp.SimpMessagingTemplate
 import org.springframework.stereotype.Controller
+import org.springframework.web.socket.messaging.SessionDisconnectEvent
 
 @Controller
 class WebSocketBrokerController(
@@ -267,5 +270,26 @@ class WebSocketBrokerController(
                 games = openGames
             )
         )
+    }
+
+    /**
+     * Handles WebSocket disconnects by logging the event.
+     * Players are deliberately NOT removed from their game's player list on disconnect —
+     * their slot and playerId persist, enabling reconnection detection via the existing
+     * rejoin logic in [GameController.joinGame]. Only an explicit leave/close endpoint
+     * should remove a player from the game.
+     */
+    @EventListener
+    fun onSessionDisconnect(event: SessionDisconnectEvent) {
+        logger.info(
+            "Session disconnected: sessionId={}, userId={}",
+            event.sessionId,
+            event.user?.name ?: "unknown"
+        )
+        // No player removal — keep slot and playerIds for reconnection.
+    }
+
+    companion object {
+        private val logger = LoggerFactory.getLogger(WebSocketBrokerController::class.java)
     }
 }
