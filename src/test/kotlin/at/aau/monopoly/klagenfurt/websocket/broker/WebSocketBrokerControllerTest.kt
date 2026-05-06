@@ -37,14 +37,14 @@ class WebSocketBrokerControllerTest {
 
     private fun captureLastMessages(
         messagingTemplate: SimpMessagingTemplate,
-        count: Int
+        expectedCount: Int
     ): List<Pair<String, Any>> {
         val destinationCaptor = ArgumentCaptor.forClass(String::class.java)
         val payloadCaptor = ArgumentCaptor.forClass(Any::class.java)
-        Mockito.verify(messagingTemplate, Mockito.atLeastOnce())
+        Mockito.verify(messagingTemplate, Mockito.atLeast(expectedCount))
             .convertAndSend(destinationCaptor.capture(), payloadCaptor.capture())
         val allMessages = destinationCaptor.allValues.zip(payloadCaptor.allValues)
-        return allMessages.takeLast(count)
+        return allMessages.takeLast(expectedCount)
     }
 
     @Test
@@ -502,5 +502,291 @@ class WebSocketBrokerControllerTest {
 
         assertEquals("TURN_ENDED", event.event)
         assertEquals("Bob", event.gameState!!.currentPlayer!!.name)
+    }
+
+    // ============ ACTION CARD TESTS ============
+
+    @Test
+    fun `drawChanceCard should move card from deck to currentActionCard`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame()
+
+        val initialDeckSize = gameState.chanceCards.size
+        controller.handleAction(GameAction(gameId = gameState.gameId, action = "DRAW_CARD", payload = mapOf("cardType" to "CHANCE")))
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ACTION_DRAWN", event.event)
+        assertNotNull(gameState.currentActionCard)
+        assertEquals(initialDeckSize - 1, gameState.chanceCards.size)
+    }
+
+    @Test
+    fun `drawCommunityChestCard should move card from deck to currentActionCard`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame()
+
+        val initialDeckSize = gameState.communityChestCards.size
+        controller.handleAction(GameAction(gameId = gameState.gameId, action = "DRAW_CARD", payload = mapOf("cardType" to "COMMUNITY_CHEST")))
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ACTION_DRAWN", event.event)
+        assertNotNull(gameState.currentActionCard)
+        assertEquals(initialDeckSize - 1, gameState.communityChestCards.size)
+    }
+
+    @Test
+    fun `drawChanceCard should reshuffle deck when empty`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame()
+        gameState.chanceCards.clear()
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, action = "DRAW_CARD", payload = mapOf("cardType" to "CHANCE")))
+
+        assertNotNull(gameState.currentActionCard)
+        assertEquals(15, gameState.chanceCards.size)  // 16 - 1 drawn
+    }
+
+    @Test
+    fun `drawCard should emit error with missing cardType`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame()
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, action = "DRAW_CARD", payload = emptyMap()))
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("cardType must be specified"))
+    }
+
+    @Test
+    fun `drawCard should emit error with invalid cardType`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame()
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, action = "DRAW_CARD", payload = mapOf("cardType" to "INVALID")))
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("Unknown card type"))
+    }
+
+    @Test
+    fun `executeAction COLLECT_MONEY should increase player money`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame()
+        gameController.joinGame(gameState.gameId, Player(id = "player-1", name = "Alice", money = 1000))
+
+        val card = at.aau.monopoly.klagenfurt.model.card.ChanceCard(
+            id = 1,
+            description = "Collect \$200",
+            action = at.aau.monopoly.klagenfurt.model.enums.CardAction.COLLECT_MONEY,
+            amount = 200
+        )
+        gameState.currentActionCard = card
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "player-1", action = "EXECUTE_ACTION"))
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ACTION_EXECUTED", event.event)
+        assertEquals(1200, gameState.players[0].money)
+        assertNull(gameState.currentActionCard)
+    }
+
+    @Test
+    fun `executeAction PAY_MONEY should decrease player money and add to free parking`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame()
+        gameController.joinGame(gameState.gameId, Player(id = "player-1", name = "Alice", money = 1000))
+
+        val card = at.aau.monopoly.klagenfurt.model.card.ChanceCard(
+            id = 2,
+            description = "Pay \$100",
+            action = at.aau.monopoly.klagenfurt.model.enums.CardAction.PAY_MONEY,
+            amount = 100
+        )
+        gameState.currentActionCard = card
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "player-1", action = "EXECUTE_ACTION"))
+
+        assertEquals(900, gameState.players[0].money)
+        assertEquals(100, gameState.freeParkingMoney)
+        assertNull(gameState.currentActionCard)
+    }
+
+    @Test
+    fun `executeAction MOVE_TO should move player to target field`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame()
+        gameController.joinGame(gameState.gameId, Player(id = "player-1", name = "Alice"))
+
+        val card = at.aau.monopoly.klagenfurt.model.card.ChanceCard(
+            id = 3,
+            description = "Go to field 5",
+            action = at.aau.monopoly.klagenfurt.model.enums.CardAction.MOVE_TO,
+            targetFieldId = 5
+        )
+        gameState.currentActionCard = card
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "player-1", action = "EXECUTE_ACTION"))
+
+        assertEquals(5, gameState.players[0].position)
+    }
+
+    @Test
+    fun `executeAction MOVE_TO backwards should grant $200`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame()
+        val player = Player(id = "player-1", name = "Alice", position = 25, money = 1000)
+        gameController.joinGame(gameState.gameId, player)
+
+        val card = at.aau.monopoly.klagenfurt.model.card.ChanceCard(
+            id = 3,
+            description = "Go to Go",
+            action = at.aau.monopoly.klagenfurt.model.enums.CardAction.MOVE_TO,
+            targetFieldId = 0
+        )
+        gameState.currentActionCard = card
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "player-1", action = "EXECUTE_ACTION"))
+
+        assertEquals(0, gameState.players[0].position)
+        assertEquals(1200, gameState.players[0].money)  // +$200 for passing Go
+    }
+
+    @Test
+    fun `executeAction MOVE_FORWARD should advance player and grant $200 if passed Go`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame()
+        val player = Player(id = "player-1", name = "Alice", position = 35, money = 1000)
+        gameController.joinGame(gameState.gameId, player)
+
+        val card = at.aau.monopoly.klagenfurt.model.card.ChanceCard(
+            id = 4,
+            description = "Advance 10 spaces",
+            action = at.aau.monopoly.klagenfurt.model.enums.CardAction.MOVE_FORWARD,
+            moveSpaces = 10
+        )
+        gameState.currentActionCard = card
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "player-1", action = "EXECUTE_ACTION"))
+
+        assertEquals(5, gameState.players[0].position)  // 35 + 10 = 45 % 40 = 5
+        assertEquals(1200, gameState.players[0].money)  // +$200 for passing Go
+    }
+
+    @Test
+    fun `executeAction GO_TO_JAIL should move player to jail and set flags`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame()
+        gameController.joinGame(gameState.gameId, Player(id = "player-1", name = "Alice"))
+
+        val card = at.aau.monopoly.klagenfurt.model.card.ChanceCard(
+            id = 5,
+            description = "Go to Jail",
+            action = at.aau.monopoly.klagenfurt.model.enums.CardAction.GO_TO_JAIL
+        )
+        gameState.currentActionCard = card
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "player-1", action = "EXECUTE_ACTION"))
+
+        assertEquals(10, gameState.players[0].position)
+        assertTrue(gameState.players[0].inJail)
+        assertEquals(0, gameState.players[0].jailTurns)
+    }
+
+    @Test
+    fun `executeAction GET_OUT_OF_JAIL should increment jail cards`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame()
+        gameController.joinGame(gameState.gameId, Player(id = "player-1", name = "Alice", getOutOfJailCards = 0))
+
+        val card = at.aau.monopoly.klagenfurt.model.card.ChanceCard(
+            id = 6,
+            description = "Get Out of Jail Free",
+            action = at.aau.monopoly.klagenfurt.model.enums.CardAction.GET_OUT_OF_JAIL
+        )
+        gameState.currentActionCard = card
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "player-1", action = "EXECUTE_ACTION"))
+
+        assertEquals(1, gameState.players[0].getOutOfJailCards)
+    }
+
+    @Test
+    fun `executeAction PAY_EACH_PLAYER should transfer money from player to others`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame()
+        gameController.joinGame(gameState.gameId, Player(id = "player-1", name = "Alice", money = 1000))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", money = 1500))
+        gameController.joinGame(gameState.gameId, Player(id = "player-3", name = "Charlie", money = 1500))
+
+        val card = at.aau.monopoly.klagenfurt.model.card.ChanceCard(
+            id = 7,
+            description = "Pay each player \$50",
+            action = at.aau.monopoly.klagenfurt.model.enums.CardAction.PAY_EACH_PLAYER,
+            amount = 50
+        )
+        gameState.currentActionCard = card
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "player-1", action = "EXECUTE_ACTION"))
+
+        assertEquals(900, gameState.players[0].money)  // Alice: 1000 - 50 - 50
+        assertEquals(1550, gameState.players[1].money)  // Bob: 1500 + 50
+        assertEquals(1550, gameState.players[2].money)  // Charlie: 1500 + 50
+    }
+
+    @Test
+    fun `executeAction COLLECT_FROM_EACH should transfer money from others to player`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame()
+        gameController.joinGame(gameState.gameId, Player(id = "player-1", name = "Alice", money = 1000))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", money = 1500))
+        gameController.joinGame(gameState.gameId, Player(id = "player-3", name = "Charlie", money = 1500))
+
+        val card = at.aau.monopoly.klagenfurt.model.card.ChanceCard(
+            id = 8,
+            description = "Collect from each player \$50",
+            action = at.aau.monopoly.klagenfurt.model.enums.CardAction.COLLECT_FROM_EACH,
+            amount = 50
+        )
+        gameState.currentActionCard = card
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "player-1", action = "EXECUTE_ACTION"))
+
+        assertEquals(1100, gameState.players[0].money)  // Alice: 1000 + 50 + 50
+        assertEquals(1450, gameState.players[1].money)  // Bob: 1500 - 50
+        assertEquals(1450, gameState.players[2].money)  // Charlie: 1500 - 50
+    }
+
+    @Test
+    fun `executeAction should emit error when no action card is set`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame()
+        gameController.joinGame(gameState.gameId, Player(id = "player-1", name = "Alice"))
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "player-1", action = "EXECUTE_ACTION"))
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("No action card to execute"))
+    }
+
+    @Test
+    fun `multiple draws should cycle through deck correctly`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame()
+
+        // Draw 5 cards
+        repeat(5) {
+            controller.handleAction(GameAction(gameId = gameState.gameId, action = "DRAW_CARD", payload = mapOf("cardType" to "CHANCE")))
+        }
+
+        assertEquals(11, gameState.chanceCards.size)  // 16 - 5 drawn
     }
 }
