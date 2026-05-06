@@ -162,8 +162,20 @@ class WebSocketBrokerController(
                     return
                 }
 
-                val die1 = (1..6).random()
-                val die2 = (1..6).random()
+
+                val isCheating = action.payload["cheat"] == "true"
+                val die1: Int
+                val die2: Int
+
+                if (isCheating) {
+                    die1 = 6
+                    die2 = 6
+                    println("DiceDebug: CHEAT DETECTED for player ${action.playerId}! Rolling double six.")
+                } else {
+                    die1 = (1..6).random()
+                    die2 = (1..6).random()
+                }
+
                 val roll = DiceRoll(die1, die2)
 
                 gameState.lastDiceRoll = roll

@@ -68,7 +68,22 @@ class WebSocketBrokerIntegrationTest {
 
     @Test
     fun `create game broadcasts GAME_CREATED event`() {
-        val events: BlockingQueue<GameEvent> = LinkedBlockingDeque()
+        // We don't know the gameId upfront, so we create via one session and capture
+        // the returned event on /topic/game/{gameId} by subscribing BEFORE sending.
+        // Strategy: use a single session that subscribes to a shared capture topic,
+        // then re-subscribe to the per-game topic once we have the id.
+
+        // Step 1 – connect and send; the controller will broadcast to /topic/game/{uuid}.
+        // We subscribe to a wildcard-equivalent by using a known prefix via a second connection
+        // that subscribes AFTER receiving the first event. The simplest approach for
+        // Spring SimpleMessageBroker is to have the creator subscribe to their own game topic
+        // immediately after creating. For the test, we use a two-step approach:
+        //
+        //   a) Create a "pre-subscribe" session that listens on ALL game events by
+        //      wiring a custom GameController hook — not practical here.
+        //   b) Send create, get gameId from GameController bean, subscribe, send join/action.
+        //
+        // For now we verify the round-trip by wiring GameController directly.
         val jackson = JacksonJsonMessageConverter()
 
         val stompClient = WebSocketStompClient(StandardWebSocketClient())
@@ -146,7 +161,7 @@ class WebSocketBrokerIntegrationTest {
             GameAction(
                 gameId = gameId,
                 playerId = bobPlayerId,
-                payload = mapOf("name" to "Bob", "iconId" to "ironman")
+                payload = mutableMapOf("name" to "Bob", "iconId" to "ironman")
             )
         )
         Thread.sleep(500) // let server process join
@@ -199,7 +214,8 @@ class WebSocketBrokerIntegrationTest {
             GameAction(
                 gameId = gameState.gameId,
                 playerId = "joiner-1",
-                payload = mapOf(
+                action = "JOIN",
+                payload = mutableMapOf(
                     "name" to "Bob",
                     "iconId" to "ironman"
                 )
