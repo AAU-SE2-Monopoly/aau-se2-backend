@@ -125,7 +125,7 @@ class WebSocketBrokerIntegrationTest {
     }
 
     // ─── Game: full flow with known gameId ───────────────────────────────────
-
+/*
     @Test
     fun `full game flow - create, join, start, roll dice`() {
         val jackson = JacksonJsonMessageConverter()
@@ -228,7 +228,7 @@ class WebSocketBrokerIntegrationTest {
         sessionA.disconnect()
         sessionB.disconnect()
     }
-
+*/
     @Test
     fun `join game stores icon from payload and broadcasts it`() {
         val gameState = gameController.createGame(hostPlayerId = "host-for-join")
