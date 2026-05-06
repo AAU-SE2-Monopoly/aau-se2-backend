@@ -1,16 +1,15 @@
 package at.aau.monopoly.klagenfurt.messaging.dtos
 
+import com.fasterxml.jackson.annotation.JsonProperty
+
 /**
  * Inbound DTO – sent by a client to perform an action in the game.
- *
- * Examples of [action] values: "ROLL_DICE", "BUY_PROPERTY", "END_TURN",
- * "PAY_RENT", "BUILD_HOUSE", "MORTGAGE", "DECLARE_BANKRUPTCY".
  */
 data class GameAction(
-    val gameId: String = "",
-    val playerId: String = "",
-    val action: String = "",
-    /** Optional extra data relevant to the action (e.g. propertyId for BUY_PROPERTY). */
-    val payload: Map<String, String> = emptyMap()
-)
+    @JsonProperty("gameId") var gameId: String = "",
+    @JsonProperty("playerId") var playerId: String = "",
+    @JsonProperty("action") var action: String = "",
 
+    // HIER IST DER FIX: var statt val und mutableMapOf statt emptyMap
+    @JsonProperty("payload") var payload: MutableMap<String, String> = mutableMapOf()
+)
