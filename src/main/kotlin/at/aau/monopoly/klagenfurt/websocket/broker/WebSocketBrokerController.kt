@@ -159,9 +159,20 @@ class WebSocketBrokerController(
                 }
 
                 val roll = DiceRoll(die1, die2)
+                val player = gameState.currentPlayer!!
+                val oldPosition = player.position
+                val newPosition = (oldPosition + roll.total) % gameState.fields.size
 
+                // Pass-Go / land-on-Go bonus
+                if (newPosition < oldPosition && newPosition != 0) {
+                    player.money += 200
+                }
+
+                player.position = newPosition
                 gameState.lastDiceRoll = roll
                 gameState.phase = GamePhase.BUYING
+
+                val passGoMsg = if (newPosition < oldPosition) " and passed Go (+200€)" else ""
 
                 messagingTemplate.convertAndSend(
                     "/topic/game/${action.gameId}",
@@ -169,7 +180,7 @@ class WebSocketBrokerController(
                         gameId = action.gameId,
                         event = "DICE_ROLLED",
                         gameState = gameState,
-                        message = "${gameState.currentPlayer?.name} rolled ${roll.die1} + ${roll.die2} = ${roll.total}."
+                        message = "${player.name} rolled ${roll.die1} + ${roll.die2} = ${roll.total}$passGoMsg."
                     )
                 )
             }
