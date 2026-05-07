@@ -161,4 +161,41 @@ class GameStateTest {
 
         assertFalse(gameState.isGameOver())
     }
+
+    @Test
+    fun `endCurrentTurn should set phase to TURN_END and nullify lastDiceRoll`() {
+        val gameState = GameState(
+            gameId = "game-1",
+            fields = BoardFactory.createDefaultBoard(),
+            phase = GamePhase.BUYING,
+            lastDiceRoll = DiceRoll(3, 4)
+        )
+
+        gameState.endCurrentTurn()
+
+        assertEquals(GamePhase.TURN_END, gameState.phase)
+        assertNull(gameState.lastDiceRoll)
+    }
+
+    @Test
+    fun `endCurrentTurn should not change currentPlayerIndex`() {
+        val players = mutableListOf(
+            Player(id = "1", name = "Alice"),
+            Player(id = "2", name = "Bob")
+        )
+
+        val gameState = GameState(
+            gameId = "game-1",
+            fields = BoardFactory.createDefaultBoard(),
+            players = players,
+            currentPlayerIndex = 0,
+            phase = GamePhase.BUYING
+        )
+
+        gameState.endCurrentTurn()
+
+        assertEquals(0, gameState.currentPlayerIndex)
+        assertEquals("Alice", gameState.currentPlayer?.name)
+        assertEquals(GamePhase.TURN_END, gameState.phase)
+    }
 }

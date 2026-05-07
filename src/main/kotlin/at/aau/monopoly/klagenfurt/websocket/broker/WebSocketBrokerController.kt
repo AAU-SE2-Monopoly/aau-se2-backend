@@ -186,6 +186,46 @@ class WebSocketBrokerController(
             }
 
             "END_TURN" -> {
+                // Guard: only valid during BUYING phase
+                if (gameState.phase != GamePhase.BUYING) {
+                messagingTemplate.convertAndSend(
+                    "/topic/game/${action.gameId}",
+                    GameEvent(
+                        gameId = action.gameId,
+                            event = "ERROR",
+                        gameState = gameState,
+                            message = "Can only end turn during the buying phase."
+                    )
+                )
+                    return
+            }
+                // Guard: must be current player
+                if (gameState.currentPlayer?.id != action.playerId) {
+                messagingTemplate.convertAndSend(
+                    "/topic/game/${action.gameId}",
+            GameEvent(
+                gameId = action.gameId,
+                    event = "ERROR",
+                            gameState = gameState,
+                            message = "It is not your turn."
+                )
+            )
+                    return
+        }
+
+                // Step 1: Signal turn ending (phase = TURN_END, same player)
+                gameState.endCurrentTurn()
+        messagingTemplate.convertAndSend(
+                    "/topic/game/${action.gameId}",
+                    GameEvent(
+                        gameId = action.gameId,
+                        event = "TURN_ENDING",
+                        gameState = gameState,
+                        message = "${gameState.currentPlayer?.name} ended their turn."
+            )
+        )
+
+                // Step 2: Advance to next player (phase = ROLLING)
                 gameState.advanceTurn()
                 messagingTemplate.convertAndSend(
                     "/topic/game/${action.gameId}",
@@ -196,14 +236,14 @@ class WebSocketBrokerController(
                         message = "Next turn: ${gameState.currentPlayer?.name}."
                     )
                 )
-            }
+    }
 
             else -> {
                 messagingTemplate.convertAndSend(
                     "/topic/game/${action.gameId}",
                     GameEvent(gameId = action.gameId, event = "ERROR", message = "Unknown action: ${action.action}")
                 )
-            }
+}
         }
     }
 
