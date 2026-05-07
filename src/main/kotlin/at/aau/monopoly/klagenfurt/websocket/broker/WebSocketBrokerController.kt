@@ -9,6 +9,8 @@ import at.aau.monopoly.klagenfurt.model.Player
 import at.aau.monopoly.klagenfurt.model.card.Card
 import at.aau.monopoly.klagenfurt.model.enums.CardAction
 import at.aau.monopoly.klagenfurt.model.enums.GamePhase
+import at.aau.monopoly.klagenfurt.model.field.ChanceField
+import at.aau.monopoly.klagenfurt.model.field.CommunityChestField
 import org.springframework.messaging.handler.annotation.MessageMapping
 import org.springframework.messaging.simp.SimpMessagingTemplate
 import org.springframework.stereotype.Controller
@@ -190,6 +192,20 @@ class WebSocketBrokerController(
             }
 
             "DRAW_CARD" -> {
+                // Validate that it is the current player's turn
+                if (gameState.currentPlayer?.id != action.playerId) {
+                    messagingTemplate.convertAndSend(
+                        "/topic/game/${action.gameId}",
+                        GameEvent(
+                            gameId = action.gameId,
+                            event = "ERROR",
+                            gameState = gameState,
+                            message = "It is not your turn."
+                        )
+                    )
+                    return
+                }
+
                 val cardType = action.payload["cardType"] as? String
                 if (cardType == null) {
                     messagingTemplate.convertAndSend(
@@ -204,9 +220,11 @@ class WebSocketBrokerController(
                     return
                 }
 
-                val card = when (cardType) {
-                    "CHANCE" -> drawChanceCard(gameState)
-                    "COMMUNITY_CHEST" -> drawCommunityChestCard(gameState)
+                // Validate that the player is on the correct field type
+                val currentField = gameState.fields.getOrNull(gameState.currentPlayer?.position ?: -1)
+                val isValidFieldType = when (cardType) {
+                    "CHANCE" -> currentField is ChanceField
+                    "COMMUNITY_CHEST" -> currentField is CommunityChestField
                     else -> {
                         messagingTemplate.convertAndSend(
                             "/topic/game/${action.gameId}",
@@ -218,6 +236,25 @@ class WebSocketBrokerController(
                         )
                         return
                     }
+                }
+
+                if (!isValidFieldType) {
+                    messagingTemplate.convertAndSend(
+                        "/topic/game/${action.gameId}",
+                        GameEvent(
+                            gameId = action.gameId,
+                            event = "ERROR",
+                            gameState = gameState,
+                            message = "You must be on a $cardType field to draw this card."
+                        )
+                    )
+                    return
+                }
+
+                val card = when (cardType) {
+                    "CHANCE" -> drawChanceCard(gameState)
+                    "COMMUNITY_CHEST" -> drawCommunityChestCard(gameState)
+                    else -> return  // Should not reach here due to earlier validation
                 }
 
                 gameState.currentActionCard = card
