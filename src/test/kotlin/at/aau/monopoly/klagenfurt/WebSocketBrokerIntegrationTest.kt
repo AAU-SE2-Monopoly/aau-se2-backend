@@ -84,6 +84,7 @@ class WebSocketBrokerIntegrationTest {
         //   b) Send create, get gameId from GameController bean, subscribe, send join/action.
         //
         // For now we verify the round-trip by wiring GameController directly.
+
         val jackson = JacksonJsonMessageConverter()
 
         val stompClient = WebSocketStompClient(StandardWebSocketClient())
