@@ -428,6 +428,68 @@ class WebSocketBrokerControllerTest {
     }
 
     @Test
+    fun `joinGame should emit error when game has already started`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        // Start the game — phase becomes ROLLING
+        gameState.advanceTurn()
+
+        // A fresh player (not a rejoin) tries to join an already-started game
+        controller.joinGame(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "intruder",
+                payload = mutableMapOf("name" to "Intruder")
+            )
+        )
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ERROR", event.event)
+        assertEquals(gameState.gameId, event.gameId)
+        // The existing gameState is included in the error response
+        assertNotNull(event.gameState)
+        assertEquals(gameState.gameId, event.gameState!!.gameId)
+        assertEquals(gameState.players.size, event.gameState.players.size)
+        assertTrue(event.message!!.contains("not a participant"))
+    }
+
+    @Test
+    fun `joinGame should emit error when game is full`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+
+        // Fill the game to max capacity
+        repeat(gameController.maxPlayersPerGame) { index ->
+            gameController.joinGame(
+                gameState.gameId,
+                Player(id = "player-$index", name = "Player $index")
+            )
+        }
+
+        // Attempt to join one more player
+        controller.joinGame(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "overflow-player",
+                payload = mutableMapOf("name" to "Overflow")
+            )
+        )
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ERROR", event.event)
+        assertEquals(gameState.gameId, event.gameId)
+        // The existing gameState is included in the error response
+        assertNotNull(event.gameState)
+        assertEquals(gameState.gameId, event.gameState!!.gameId)
+        assertEquals(6, event.gameState.players.size)
+        assertTrue(event.message!!.contains("already full"))
+    }
+
+    @Test
     fun `joinGame should normalize blank icon from payload to default`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
