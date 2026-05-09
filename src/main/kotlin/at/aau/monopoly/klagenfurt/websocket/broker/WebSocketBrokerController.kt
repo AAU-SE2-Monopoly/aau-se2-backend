@@ -192,6 +192,20 @@ class WebSocketBrokerController(
             }
 
             "DRAW_CARD" -> {
+                //validate if the player has already drawn a card this turn (only one card per turn allowed)
+                if (gameState.hasDrawnCardThisTurn) {
+                    messagingTemplate.convertAndSend(
+                        "/topic/game/${action.gameId}",
+                        GameEvent(
+                            gameId = action.gameId,
+                            event = "ERROR",
+                            gameState = gameState,
+                            message = "You can only draw one card per turn."
+                        )
+                    )
+                    return
+                }
+
                 // Validate that it is the current player's turn
                 if (gameState.currentPlayer?.id != action.playerId) {
                     messagingTemplate.convertAndSend(
@@ -258,6 +272,7 @@ class WebSocketBrokerController(
                 }
 
                 gameState.currentActionCard = card
+                gameState.hasDrawnCardThisTurn = true
                 messagingTemplate.convertAndSend(
                     "/topic/game/${action.gameId}",
                     GameEvent(
