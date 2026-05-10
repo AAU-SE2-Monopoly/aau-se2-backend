@@ -159,9 +159,84 @@ class WebSocketBrokerController(
                 }
 
                 val roll = DiceRoll(die1, die2)
-
                 gameState.lastDiceRoll = roll
-                gameState.phase = GamePhase.BUYING
+
+                val player = gameState.currentPlayer!!
+                var eventMessage = "${player.name} rolled ${roll.die1} + ${roll.die2} = ${roll.total}."
+                
+                if (player.inJail) {
+                    if (roll.isDouble) {
+                        player.inJail = false
+                        player.jailTurns = 0
+                        eventMessage += " They rolled a doublet and got out of jail!"
+                        
+                        val oldPos = player.position
+                        val newPos = (oldPos + roll.total) % 40
+                        player.position = newPos
+                        
+                        player.consecutiveDoublets = 0
+                        gameState.phase = GamePhase.BUYING
+                    } else {
+                        player.jailTurns++
+                        if (player.jailTurns >= 3) {
+                            player.money -= 50
+                            player.inJail = false
+                            player.jailTurns = 0
+                            eventMessage += " Failed 3rd attempt. Paid 50M to get out!"
+                            
+                            val oldPos = player.position
+                            val newPos = (oldPos + roll.total) % 40
+                            player.position = newPos
+                            gameState.phase = GamePhase.BUYING
+                        } else {
+                            eventMessage += " Still in jail (turn ${player.jailTurns}/3)."
+                            gameState.phase = GamePhase.TURN_END
+                        }
+                    }
+                } else {
+                    if (roll.isDouble) {
+                        player.consecutiveDoublets++
+                        if (player.consecutiveDoublets >= 3) {
+                            player.inJail = true
+                            player.position = 10
+                            player.jailTurns = 0
+                            player.consecutiveDoublets = 0
+                            eventMessage += " Rolled 3 doublets! Go to Jail!"
+                            gameState.phase = GamePhase.TURN_END
+                        } else {
+                            eventMessage += " Rolled a doublet! Gets another turn."
+                            val oldPos = player.position
+                            val newPos = (oldPos + roll.total) % 40
+                            if (newPos < oldPos) player.money += 200
+                            player.position = newPos
+                            gameState.phase = GamePhase.BUYING
+                            
+                            if (newPos == 30) { // Go to Jail Field
+                                player.inJail = true
+                                player.position = 10
+                                player.jailTurns = 0
+                                player.consecutiveDoublets = 0
+                                eventMessage += " Landed on Go To Jail!"
+                                gameState.phase = GamePhase.TURN_END
+                            }
+                        }
+                    } else {
+                        player.consecutiveDoublets = 0
+                        val oldPos = player.position
+                        val newPos = (oldPos + roll.total) % 40
+                        if (newPos < oldPos) player.money += 200
+                        player.position = newPos
+                        gameState.phase = GamePhase.BUYING
+                        
+                        if (newPos == 30) { // Go to Jail Field
+                            player.inJail = true
+                            player.position = 10
+                            player.jailTurns = 0
+                            eventMessage += " Landed on Go To Jail!"
+                            gameState.phase = GamePhase.TURN_END
+                        }
+                    }
+                }
 
                 messagingTemplate.convertAndSend(
                     "/topic/game/${action.gameId}",
@@ -169,22 +244,93 @@ class WebSocketBrokerController(
                         gameId = action.gameId,
                         event = "DICE_ROLLED",
                         gameState = gameState,
-                        message = "${gameState.currentPlayer?.name} rolled ${roll.die1} + ${roll.die2} = ${roll.total}."
+                        message = eventMessage
+                    )
+                )
+            }
+
+            "PAY_JAIL_FINE" -> {
+                if (gameState.currentPlayer?.id != action.playerId) {
+                    messagingTemplate.convertAndSend("/topic/game/${action.gameId}", GameEvent(gameId = action.gameId, event = "ERROR", message = "It is not your turn."))
+                    return
+                }
+                val player = gameState.currentPlayer!!
+                if (!player.inJail) {
+                    messagingTemplate.convertAndSend("/topic/game/${action.gameId}", GameEvent(gameId = action.gameId, event = "ERROR", message = "You are not in jail."))
+                    return
+                }
+                if (player.money < 50) {
+                    messagingTemplate.convertAndSend("/topic/game/${action.gameId}", GameEvent(gameId = action.gameId, event = "ERROR", message = "Not enough money to pay the fine."))
+                    return
+                }
+                player.money -= 50
+                player.inJail = false
+                player.jailTurns = 0
+                messagingTemplate.convertAndSend(
+                    "/topic/game/${action.gameId}",
+                    GameEvent(
+                        gameId = action.gameId,
+                        event = "JAIL_FINE_PAID",
+                        gameState = gameState,
+                        message = "${player.name} paid 50M to get out of jail."
+                    )
+                )
+            }
+
+            "USE_JAIL_CARD" -> {
+                if (gameState.currentPlayer?.id != action.playerId) {
+                    messagingTemplate.convertAndSend("/topic/game/${action.gameId}", GameEvent(gameId = action.gameId, event = "ERROR", message = "It is not your turn."))
+                    return
+                }
+                val player = gameState.currentPlayer!!
+                if (!player.inJail) {
+                    messagingTemplate.convertAndSend("/topic/game/${action.gameId}", GameEvent(gameId = action.gameId, event = "ERROR", message = "You are not in jail."))
+                    return
+                }
+                if (player.getOutOfJailCards <= 0) {
+                    messagingTemplate.convertAndSend("/topic/game/${action.gameId}", GameEvent(gameId = action.gameId, event = "ERROR", message = "You do not have a Get Out of Jail Free card."))
+                    return
+                }
+                player.getOutOfJailCards -= 1
+                player.inJail = false
+                player.jailTurns = 0
+                messagingTemplate.convertAndSend(
+                    "/topic/game/${action.gameId}",
+                    GameEvent(
+                        gameId = action.gameId,
+                        event = "JAIL_CARD_USED",
+                        gameState = gameState,
+                        message = "${player.name} used a Get Out of Jail Free card."
                     )
                 )
             }
 
             "END_TURN" -> {
-                gameState.advanceTurn()
-                messagingTemplate.convertAndSend(
-                    "/topic/game/${action.gameId}",
-                    GameEvent(
-                        gameId = action.gameId,
-                        event = "TURN_ENDED",
-                        gameState = gameState,
-                        message = "Next turn: ${gameState.currentPlayer?.name}."
+                val player = gameState.currentPlayer!!
+                if (gameState.lastDiceRoll?.isDouble == true && !player.inJail && player.consecutiveDoublets > 0) {
+                    gameState.phase = GamePhase.ROLLING
+                    messagingTemplate.convertAndSend(
+                        "/topic/game/${action.gameId}",
+                        GameEvent(
+                            gameId = action.gameId,
+                            event = "TURN_ENDED",
+                            gameState = gameState,
+                            message = "${player.name} rolled a doublet and gets another turn!"
+                        )
                     )
-                )
+                } else {
+                    player.consecutiveDoublets = 0 // Reset just in case
+                    gameState.advanceTurn()
+                    messagingTemplate.convertAndSend(
+                        "/topic/game/${action.gameId}",
+                        GameEvent(
+                            gameId = action.gameId,
+                            event = "TURN_ENDED",
+                            gameState = gameState,
+                            message = "Next turn: ${gameState.currentPlayer?.name}."
+                        )
+                    )
+                }
             }
 
             else -> {
