@@ -226,7 +226,7 @@ class WebSocketBrokerControllerTest {
     }
 
     @Test
-    fun `listGames should broadcast waiting games to lobby`() {
+    fun `listGames should broadcast all games to lobby`() {
         val (controller, gameController, messagingTemplate) = createController()
         val waitingGame = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(waitingGame.gameId, Player(id = "host-1", name = "Alice"))
@@ -239,9 +239,9 @@ class WebSocketBrokerControllerTest {
         val lobbyEvent = captureMessages(messagingTemplate, 1).single().second as LobbyEvent
 
         assertEquals("LOBBY_UPDATE", lobbyEvent.event)
-        assertEquals(1, lobbyEvent.games.size)
-        assertEquals(waitingGame.gameId, lobbyEvent.games.single().gameId)
+        assertEquals(2, lobbyEvent.games.size)
     }
+
 
     @Test
     fun `closeGame should broadcast closed event and lobby update`() {
@@ -428,6 +428,68 @@ class WebSocketBrokerControllerTest {
     }
 
     @Test
+    fun `joinGame should emit error when game has already started`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        // Start the game — phase becomes ROLLING
+        gameState.advanceTurn()
+
+        // A fresh player (not a rejoin) tries to join an already-started game
+        controller.joinGame(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "intruder",
+                payload = mutableMapOf("name" to "Intruder")
+            )
+        )
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ERROR", event.event)
+        assertEquals(gameState.gameId, event.gameId)
+        // The existing gameState is included in the error response
+        assertNotNull(event.gameState)
+        assertEquals(gameState.gameId, event.gameState!!.gameId)
+        assertEquals(gameState.players.size, event.gameState.players.size)
+        assertTrue(event.message!!.contains("not a participant"))
+    }
+
+    @Test
+    fun `joinGame should emit error when game is full`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+
+        // Fill the game to max capacity
+        repeat(gameController.maxPlayersPerGame) { index ->
+            gameController.joinGame(
+                gameState.gameId,
+                Player(id = "player-$index", name = "Player $index")
+            )
+        }
+
+        // Attempt to join one more player
+        controller.joinGame(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "overflow-player",
+                payload = mutableMapOf("name" to "Overflow")
+            )
+        )
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ERROR", event.event)
+        assertEquals(gameState.gameId, event.gameId)
+        // The existing gameState is included in the error response
+        assertNotNull(event.gameState)
+        assertEquals(gameState.gameId, event.gameState!!.gameId)
+        assertEquals(5, event.gameState.players.size)
+        assertTrue(event.message!!.contains("already full"))
+    }
+
+    @Test
     fun `joinGame should normalize blank icon from payload to default`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
@@ -468,7 +530,7 @@ class WebSocketBrokerControllerTest {
     }
 
     @Test
-    fun `startGame should remove game from open lobby list`() {
+    fun `startGame should update lobby list with current game state`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
@@ -480,8 +542,11 @@ class WebSocketBrokerControllerTest {
         val lobbyEvent = messages.first { it.first == "/topic/lobby" }.second as LobbyEvent
 
         assertEquals("LOBBY_UPDATE", lobbyEvent.event)
-        assertTrue(lobbyEvent.games.none { it.gameId == gameState.gameId })
+        // Game is now started but still appears in lobby (listAllGames returns all games)
+        assertEquals(1, lobbyEvent.games.size)
+        assertEquals(gameState.gameId, lobbyEvent.games.single().gameId)
     }
+
 
     @Test
     fun `handleAction END_TURN should not check player ownership`() {

@@ -59,18 +59,22 @@ class GameControllerTest {
     }
 
     @Test
-    fun `joinGame should not allow duplicate player ids`() {
+    fun `joinGame should allow rejoin with same player id during WAITING (wifi recovery)`() {
         val controller = GameController()
         val game = controller.createGame()
         val player = Player(id = "1", name = "Alice")
 
         controller.joinGame(game.gameId, player)
 
-        val exception = assertThrows(IllegalArgumentException::class.java) {
+        // Same player ID re-joining during WAITING should NOT throw —
+        // it should silently succeed (wifi-drop recovery).
+        assertDoesNotThrow {
             controller.joinGame(game.gameId, Player(id = "1", name = "AliceAgain"))
         }
-
-        assertTrue(exception.message!!.contains("already in game"))
+        // Existing player identity (name, icon) is preserved.
+        val gameState = controller.getGameState(game.gameId)!!
+        assertEquals(1, gameState.players.size)
+        assertEquals("Alice", gameState.players[0].name)
     }
 
     @Test
@@ -192,7 +196,7 @@ class GameControllerTest {
     }
 
     @Test
-    fun `listOpenGames should return only games in WAITING phase`() {
+    fun `listAllGames should return all games`() {
         val controller = GameController()
         val game1 = controller.createGame(hostPlayerId = "host-1")
         controller.joinGame(game1.gameId, Player(id = "host-1", name = "Alice"))
@@ -202,19 +206,22 @@ class GameControllerTest {
         // Start game1 so it leaves WAITING
         controller.getGameState(game1.gameId)!!.advanceTurn()
 
-        val openGames = controller.listOpenGames()
+        val allGames = controller.listAllGames()
 
-        assertEquals(1, openGames.size)
-        assertEquals(game2.gameId, openGames[0].gameId)
-        assertEquals("Bob", openGames[0].hostPlayerName)
-        assertEquals(1, openGames[0].playerCount)
+        assertEquals(2, allGames.size)
+        val game1Info = allGames.first { it.gameId == game1.gameId }
+        assertEquals("Alice", game1Info.hostPlayerName)
+        assertEquals(1, game1Info.playerCount)
+        val game2Info = allGames.first { it.gameId == game2.gameId }
+        assertEquals("Bob", game2Info.hostPlayerName)
+        assertEquals(1, game2Info.playerCount)
     }
 
     @Test
     fun `listOpenGames should return empty when no games exist`() {
         val controller = GameController()
 
-        val openGames = controller.listOpenGames()
+        val openGames = controller.listAllGames()
 
         assertTrue(openGames.isEmpty())
     }
@@ -224,10 +231,61 @@ class GameControllerTest {
         val controller = GameController()
         val game = controller.createGame(hostPlayerId = "host-1")
 
-        val openGames = controller.listOpenGames()
+        val allGames = controller.listAllGames()
 
-        assertEquals(1, openGames.size)
-        assertEquals(game.gameId, openGames[0].gameId)
-        assertEquals("Unknown", openGames[0].hostPlayerName)
+        assertEquals(1, allGames.size)
+        assertEquals(game.gameId, allGames[0].gameId)
+        assertEquals("Unknown", allGames[0].hostPlayerName)
+    }
+
+    @Test
+    fun `joinGame should allow rejoin with same player id during InProgress (app restart)`() {
+        val controller = GameController()
+        val game = controller.createGame(hostPlayerId = "1")
+        controller.joinGame(game.gameId, Player(id = "1", name = "Alice"))
+        controller.joinGame(game.gameId, Player(id = "2", name = "Bob"))
+        // Start the game — phase becomes ROLLING
+        controller.getGameState(game.gameId)!!.advanceTurn()
+
+        // Same player ID re-joining during InProgress should succeed silently.
+        assertDoesNotThrow {
+            controller.joinGame(game.gameId, Player(id = "1", name = "AliceReconnect"))
+        }
+        val gameState = controller.getGameState(game.gameId)!!
+        assertEquals(2, gameState.players.size)
+        assertEquals("Alice", gameState.players[0].name) // existing identity preserved
+    }
+
+    @Test
+    fun `joinGame should reject fresh player when game is InProgress`() {
+        val controller = GameController()
+        val game = controller.createGame(hostPlayerId = "1")
+        controller.joinGame(game.gameId, Player(id = "1", name = "Alice"))
+        controller.joinGame(game.gameId, Player(id = "2", name = "Bob"))
+        // Start the game
+        controller.getGameState(game.gameId)!!.advanceTurn()
+
+        val exception = assertThrows(IllegalArgumentException::class.java) {
+            controller.joinGame(game.gameId, Player(id = "3", name = "Intruder"))
+        }
+
+        assertTrue(exception.message!!.contains("not a participant"))
+    }
+
+    @Test
+    fun `closeGame should reject when game has already started`() {
+        val controller = GameController()
+        val game = controller.createGame(hostPlayerId = "host-1")
+        controller.joinGame(game.gameId, Player(id = "host-1", name = "Alice"))
+        // Start the game
+        controller.getGameState(game.gameId)!!.advanceTurn()
+
+        val exception = assertThrows(IllegalArgumentException::class.java) {
+            controller.closeGame(game.gameId, "host-1")
+        }
+
+        assertTrue(exception.message!!.contains("already started"))
+        // Game should still exist
+        assertNotNull(controller.getGameState(game.gameId))
     }
 }

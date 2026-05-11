@@ -11,9 +11,12 @@ import at.aau.monopoly.klagenfurt.model.enums.CardAction
 import at.aau.monopoly.klagenfurt.model.enums.GamePhase
 import at.aau.monopoly.klagenfurt.model.field.ChanceField
 import at.aau.monopoly.klagenfurt.model.field.CommunityChestField
+import org.slf4j.LoggerFactory
+import org.springframework.context.event.EventListener
 import org.springframework.messaging.handler.annotation.MessageMapping
 import org.springframework.messaging.simp.SimpMessagingTemplate
 import org.springframework.stereotype.Controller
+import org.springframework.web.socket.messaging.SessionDisconnectEvent
 
 @Controller
 class WebSocketBrokerController(
@@ -61,14 +64,29 @@ class WebSocketBrokerController(
             name = action.payload["name"] ?: action.playerId,
             iconId = normalizeIconId(action.payload["iconId"])
         )
-        gameController.joinGame(action.gameId, player)
+        try {
+            gameController.joinGame(action.gameId, player)
+        } catch (e: IllegalArgumentException) {
+            messagingTemplate.convertAndSend(
+                "/topic/game/${action.gameId}",
+                GameEvent(
+                    gameId = action.gameId,
+                    event = "ERROR",
+                    gameState = gameState,
+                    message = e.message ?: "Cannot join game."
+                )
+            )
+            return
+        }
+        // Resolve the stored name from gameState (rejoin preserves existing identity)
+        val joinedPlayerName = gameState.players.first { it.id == action.playerId }.name
         messagingTemplate.convertAndSend(
             "/topic/game/${action.gameId}",
             GameEvent(
                 gameId = action.gameId,
                 event = "PLAYER_JOINED",
                 gameState = gameState,
-                message = "${player.name} joined the game."
+                message = "$joinedPlayerName joined the game."
             )
         )
         // Broadcast updated lobby list (player count changed)
@@ -337,16 +355,16 @@ class WebSocketBrokerController(
         )
     }
 
-    /** LIST – client requests the list of all open (WAITING) games. */
+    /** LIST – client requests the list of all active games. */
     @MessageMapping("/game/list")
     @Suppress("UNUSED_PARAMETER")
     fun listGames(action: GameAction) {
-        val openGames = gameController.listOpenGames()
+        val allGames = gameController.listAllGames()
         messagingTemplate.convertAndSend(
             "/topic/lobby",
             LobbyEvent(
                 event = "LOBBY_UPDATE",
-                games = openGames
+                games = allGames
             )
         )
     }
@@ -382,7 +400,7 @@ class WebSocketBrokerController(
 
     /** Broadcasts the current open-game list to all lobby subscribers. */
     private fun broadcastLobby() {
-        val openGames = gameController.listOpenGames()
+        val openGames = gameController.listAllGames()
         messagingTemplate.convertAndSend(
             "/topic/lobby",
             LobbyEvent(
@@ -390,6 +408,27 @@ class WebSocketBrokerController(
                 games = openGames
             )
         )
+    }
+
+    /**
+     * Handles WebSocket disconnects by logging the event.
+     * Players are deliberately NOT removed from their game's player list on disconnect —
+     * their slot and playerId persist, enabling reconnection detection via the existing
+     * rejoin logic in [GameController.joinGame]. Only an explicit leave/close endpoint
+     * should remove a player from the game.
+     */
+    @EventListener
+    fun onSessionDisconnect(event: SessionDisconnectEvent) {
+        logger.info(
+            "Session disconnected: sessionId={}, userId={}",
+            event.sessionId,
+            event.user?.name ?: "unknown"
+        )
+        // No player removal — keep slot and playerIds for reconnection.
+    }
+
+    companion object {
+        private val logger = LoggerFactory.getLogger(WebSocketBrokerController::class.java)
     }
 
     /**
