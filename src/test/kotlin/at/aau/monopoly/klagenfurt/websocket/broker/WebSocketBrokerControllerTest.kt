@@ -485,7 +485,7 @@ class WebSocketBrokerControllerTest {
         // The existing gameState is included in the error response
         assertNotNull(event.gameState)
         assertEquals(gameState.gameId, event.gameState!!.gameId)
-        assertEquals(6, event.gameState.players.size)
+        assertEquals(5, event.gameState.players.size)
         assertTrue(event.message!!.contains("already full"))
     }
 

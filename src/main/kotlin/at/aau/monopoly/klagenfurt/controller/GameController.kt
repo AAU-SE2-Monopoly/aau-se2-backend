@@ -15,7 +15,7 @@ class GameController {
     private val games: ConcurrentHashMap<String, GameState> = ConcurrentHashMap()
 
     /** Maximum number of players allowed per game. */
-    val maxPlayersPerGame: Int = 6
+    val maxPlayersPerGame: Int = 5
 
     /**
      * Creates a new game with a fresh board and empty player list.
