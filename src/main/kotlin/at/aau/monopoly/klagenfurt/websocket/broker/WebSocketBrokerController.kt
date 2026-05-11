@@ -6,7 +6,11 @@ import at.aau.monopoly.klagenfurt.messaging.dtos.GameEvent
 import at.aau.monopoly.klagenfurt.messaging.dtos.LobbyEvent
 import at.aau.monopoly.klagenfurt.model.DiceRoll
 import at.aau.monopoly.klagenfurt.model.Player
+import at.aau.monopoly.klagenfurt.model.card.Card
+import at.aau.monopoly.klagenfurt.model.enums.CardAction
 import at.aau.monopoly.klagenfurt.model.enums.GamePhase
+import at.aau.monopoly.klagenfurt.model.field.ChanceField
+import at.aau.monopoly.klagenfurt.model.field.CommunityChestField
 import org.slf4j.LoggerFactory
 import org.springframework.context.event.EventListener
 import org.springframework.messaging.handler.annotation.MessageMapping
@@ -205,6 +209,128 @@ class WebSocketBrokerController(
                 )
             }
 
+            "DRAW_CARD" -> {
+                //validate if the player has already drawn a card this turn (only one card per turn allowed)
+                if (gameState.hasDrawnCardThisTurn) {
+                    messagingTemplate.convertAndSend(
+                        "/topic/game/${action.gameId}",
+                        GameEvent(
+                            gameId = action.gameId,
+                            event = "ERROR",
+                            gameState = gameState,
+                            message = "You can only draw one card per turn."
+                        )
+                    )
+                    return
+                }
+
+                // Validate that it is the current player's turn
+                if (gameState.currentPlayer?.id != action.playerId) {
+                    messagingTemplate.convertAndSend(
+                        "/topic/game/${action.gameId}",
+                        GameEvent(
+                            gameId = action.gameId,
+                            event = "ERROR",
+                            gameState = gameState,
+                            message = "It is not your turn."
+                        )
+                    )
+                    return
+                }
+
+                val cardType = action.payload["cardType"] as? String
+                if (cardType == null) {
+                    messagingTemplate.convertAndSend(
+                        "/topic/game/${action.gameId}",
+                        GameEvent(
+                            gameId = action.gameId,
+                            event = "ERROR",
+                            gameState = gameState,
+                            message = "cardType must be specified in payload."
+                        )
+                    )
+                    return
+                }
+
+                // Validate that the player is on the correct field type
+                val currentField = gameState.fields.getOrNull(gameState.currentPlayer?.position ?: -1)
+                val isValidFieldType = when (cardType) {
+                    "CHANCE" -> currentField is ChanceField
+                    "COMMUNITY_CHEST" -> currentField is CommunityChestField
+                    else -> {
+                        messagingTemplate.convertAndSend(
+                            "/topic/game/${action.gameId}",
+                            GameEvent(
+                                gameId = action.gameId,
+                                event = "ERROR",
+                                message = "Unknown card type: $cardType"
+                            )
+                        )
+                        return
+                    }
+                }
+
+                if (!isValidFieldType) {
+                    messagingTemplate.convertAndSend(
+                        "/topic/game/${action.gameId}",
+                        GameEvent(
+                            gameId = action.gameId,
+                            event = "ERROR",
+                            gameState = gameState,
+                            message = "You must be on a $cardType field to draw this card."
+                        )
+                    )
+                    return
+                }
+
+                val card = when (cardType) {
+                    "CHANCE" -> drawChanceCard(gameState)
+                    "COMMUNITY_CHEST" -> drawCommunityChestCard(gameState)
+                    else -> return  // Should not reach here due to earlier validation
+                }
+
+                gameState.currentActionCard = card
+                gameState.hasDrawnCardThisTurn = true
+                messagingTemplate.convertAndSend(
+                    "/topic/game/${action.gameId}",
+                    GameEvent(
+                        gameId = action.gameId,
+                        event = "ACTION_DRAWN",
+                        gameState = gameState,
+                        message = "Card drawn: ${card.description}"
+                    )
+                )
+            }
+
+            "EXECUTE_ACTION" -> {
+                if (gameState.currentActionCard == null) {
+                    messagingTemplate.convertAndSend(
+                        "/topic/game/${action.gameId}",
+                        GameEvent(
+                            gameId = action.gameId,
+                            event = "ERROR",
+                            gameState = gameState,
+                            message = "No action card to execute."
+                        )
+                    )
+                    return
+                }
+
+                val card = gameState.currentActionCard!!
+                executeCardAction(gameState, card, action.playerId)
+                gameState.currentActionCard = null
+
+                messagingTemplate.convertAndSend(
+                    "/topic/game/${action.gameId}",
+                    GameEvent(
+                        gameId = action.gameId,
+                        event = "ACTION_EXECUTED",
+                        gameState = gameState,
+                        message = "Action executed: ${card.description}"
+                    )
+                )
+            }
+
             else -> {
                 messagingTemplate.convertAndSend(
                     "/topic/game/${action.gameId}",
@@ -303,5 +429,100 @@ class WebSocketBrokerController(
 
     companion object {
         private val logger = LoggerFactory.getLogger(WebSocketBrokerController::class.java)
+    }
+
+    /**
+     * Draw a Chance card from the deck. If the deck is empty, shuffle all cards back.
+     */
+    private fun drawChanceCard(gameState: at.aau.monopoly.klagenfurt.model.GameState): Card {
+        if (gameState.chanceCards.isEmpty()) {
+            gameState.chanceCards.addAll(
+                at.aau.monopoly.klagenfurt.model.BoardFactory.createChanceCards()
+            )
+        }
+        return gameState.chanceCards.removeAt(0)
+    }
+
+    /**
+     * Draw a Community Chest card from the deck. If the deck is empty, shuffle all cards back.
+     */
+    private fun drawCommunityChestCard(gameState: at.aau.monopoly.klagenfurt.model.GameState): Card {
+        if (gameState.communityChestCards.isEmpty()) {
+            gameState.communityChestCards.addAll(
+                at.aau.monopoly.klagenfurt.model.BoardFactory.createCommunityChestCards()
+            )
+        }
+        return gameState.communityChestCards.removeAt(0)
+    }
+
+    /**
+     * Execute a card action: transfer money, move player, etc.
+     */
+    private fun executeCardAction(
+        gameState: at.aau.monopoly.klagenfurt.model.GameState,
+        card: Card,
+        playerId: String
+    ) {
+        val player = gameState.players.find { it.id == playerId } ?: return
+
+        when (card.action) {
+            CardAction.COLLECT_MONEY -> {
+                player.money += card.amount
+            }
+
+            CardAction.PAY_MONEY -> {
+                player.money -= card.amount
+                gameState.freeParkingMoney += card.amount  // Money goes to Free Parking
+            }
+
+            CardAction.MOVE_TO -> {
+                if (card.targetFieldId != null) {
+                    val oldPosition = player.position
+                    player.position = card.targetFieldId!!
+                    // If moved past or to Go (position 0), collect $200
+                    if (card.targetFieldId!! < oldPosition) {
+                        player.money += 200
+                    }
+                }
+            }
+
+            CardAction.MOVE_FORWARD -> {
+                player.position = (player.position + card.moveSpaces) % 40
+                if (card.moveSpaces > 0) {
+                    // If advanced past Go, collect $200
+                    player.money += 200
+                }
+            }
+
+            CardAction.GO_TO_JAIL -> {
+                player.position = 10  // Jail field
+                player.inJail = true
+                player.jailTurns = 0
+            }
+
+            CardAction.GET_OUT_OF_JAIL -> {
+                player.getOutOfJailCards += 1
+            }
+
+            CardAction.PAY_EACH_PLAYER -> {
+                // Pay to each other player
+                gameState.players.forEach { otherPlayer ->
+                    if (otherPlayer.id != playerId) {
+                        player.money -= card.amount
+                        otherPlayer.money += card.amount
+                    }
+                }
+            }
+
+            CardAction.COLLECT_FROM_EACH -> {
+                // Collect from each other player
+                gameState.players.forEach { otherPlayer ->
+                    if (otherPlayer.id != playerId) {
+                        otherPlayer.money -= card.amount
+                        player.money += card.amount
+                    }
+                }
+            }
+        }
     }
 }
