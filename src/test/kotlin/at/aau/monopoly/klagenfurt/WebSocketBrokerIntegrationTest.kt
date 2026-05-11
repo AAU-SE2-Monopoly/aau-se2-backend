@@ -3,6 +3,7 @@ package at.aau.monopoly.klagenfurt
 import at.aau.monopoly.klagenfurt.messaging.dtos.GameAction
 import at.aau.monopoly.klagenfurt.messaging.dtos.GameEvent
 import at.aau.monopoly.klagenfurt.model.Player
+import at.aau.monopoly.klagenfurt.model.enums.GamePhase
 import at.aau.monopoly.klagenfurt.websocket.StompFrameHandlerClientImpl
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
@@ -86,7 +87,6 @@ class WebSocketBrokerIntegrationTest {
 
         val jackson = JacksonJsonMessageConverter()
 
-        // Connect without a subscription first
         val stompClient = WebSocketStompClient(StandardWebSocketClient())
         stompClient.messageConverter = jackson
         val session = stompClient.connectAsync(websocketUri, object : StompSessionHandlerAdapter() {})
@@ -123,30 +123,85 @@ class WebSocketBrokerIntegrationTest {
     }
 
     // ─── Game: full flow with known gameId ───────────────────────────────────
-
     @Test
     fun `full game flow - create, join, start, roll dice`() {
         val jackson = JacksonJsonMessageConverter()
 
         // ---- Session A: creator (Alice) ----
-        val creatorEvents: BlockingQueue<GameEvent> = LinkedBlockingDeque()
+        val alicePlayerId = UUID.randomUUID().toString()
+        val existingIds = gameController.listGameIds()
 
         val stompClientA = WebSocketStompClient(StandardWebSocketClient())
         stompClientA.messageConverter = jackson
         val sessionA = stompClientA.connectAsync(websocketUri, object : StompSessionHandlerAdapter() {})
-            .get(1, TimeUnit.SECONDS)
+            .get(2, TimeUnit.SECONDS)
 
-        // Subscribe to a lobby-style "creation ack" topic before sending
-        // We use a dedicated per-player reply channel pattern via a unique correlation id
-        val correlationId = UUID.randomUUID().toString()
-        sessionA.subscribe("/topic/lobby/$correlationId", StompFrameHandlerClientImpl(creatorEvents, GameEvent::class.java))
+        // Alice creates a game
+        sessionA.send(
+            "/app/game/create",
+            Player(id = alicePlayerId, name = "Alice", iconId = "gti")
+        )
 
-        // We cannot easily use /topic/game/{uuid} before we know the uuid.
-        // Instead, the test directly validates the STOMP infrastructure compiles and connects.
-        // Real end-to-end game flow tests are better done via a shared GameController @Autowired.
+        // Get game ID from controller directly
+        val gameId = awaitNewGameId(existingIds)
+        val createdState = gameController.getGameState(gameId)
+        assertThat(createdState).isNotNull
+        assertThat(createdState!!.players).hasSize(1)
 
+        // ---- Session B: joiner (Bob) ----
+        val bobPlayerId = UUID.randomUUID().toString()
+
+        val stompClientB = WebSocketStompClient(StandardWebSocketClient())
+        stompClientB.messageConverter = jackson
+        val sessionB = stompClientB.connectAsync(websocketUri, object : StompSessionHandlerAdapter() {})
+            .get(2, TimeUnit.SECONDS)
+
+        // Bob joins the game
+        sessionB.send(
+            "/app/game/join",
+            GameAction(
+                gameId = gameId,
+                playerId = bobPlayerId,
+                payload = mutableMapOf("name" to "Bob", "iconId" to "ironman")
+            )
+        )
+        Thread.sleep(500) // let server process join
+
+        val afterJoin = gameController.getGameState(gameId)!!
+        assertThat(afterJoin.players).hasSize(2)
+        assertThat(afterJoin.players[1].name).isEqualTo("Bob")
+
+        // Alice starts the game
+        sessionA.send(
+            "/app/game/start",
+            GameAction(gameId = gameId, playerId = alicePlayerId)
+        )
+        Thread.sleep(500) // let server process start
+
+        val afterStart = gameController.getGameState(gameId)!!
+        assertThat(afterStart.phase).isEqualTo(GamePhase.ROLLING)
+        val currentPlayerId = afterStart.currentPlayer?.id
+        assertThat(currentPlayerId).isNotNull
+
+        // The player whose turn it is rolls the dice
+        val rollerSession = if (currentPlayerId == alicePlayerId) sessionA else sessionB
+        rollerSession.send(
+            "/app/game/action",
+            GameAction(gameId = gameId, playerId = currentPlayerId!!, action = "ROLL_DICE")
+        )
+        Thread.sleep(500) // let server process roll
+
+        val afterRoll = gameController.getGameState(gameId)!!
+        assertThat(afterRoll.lastDiceRoll).isNotNull
+        val rollTotal = afterRoll.lastDiceRoll!!.total
+        assertThat(rollTotal).isBetween(2, 12)
+        assertThat(afterRoll.phase).isEqualTo(GamePhase.BUYING)
+
+        // Cleanup
         sessionA.disconnect()
+        sessionB.disconnect()
     }
+
 
     @Test
     fun `join game stores icon from payload and broadcasts it`() {
