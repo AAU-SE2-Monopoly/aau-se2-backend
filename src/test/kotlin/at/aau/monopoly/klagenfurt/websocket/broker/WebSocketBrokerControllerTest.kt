@@ -93,7 +93,7 @@ class WebSocketBrokerControllerTest {
             GameAction(
                 gameId = gameState.gameId,
                 playerId = "player-2",
-                payload = emptyMap()
+                payload = mutableMapOf<String, String>()
             )
         )
 
@@ -103,7 +103,7 @@ class WebSocketBrokerControllerTest {
 
         assertEquals("PLAYER_JOINED", gameEvent.event)
         assertEquals("player-2", gameEvent.gameState!!.players[1].name)
-        assertEquals("lindwurm", gameEvent.gameState!!.players[1].iconId)
+        assertEquals("lindwurm", gameEvent.gameState.players[1].iconId)
         assertEquals(2, lobbyEvent.games.single().playerCount)
     }
 
@@ -303,7 +303,7 @@ class WebSocketBrokerControllerTest {
             GameAction(
                 gameId = gameState.gameId,
                 playerId = "player-2",
-                payload = mapOf("name" to "CustomBob", "iconId" to "gti")
+                payload = mutableMapOf("name" to "CustomBob", "iconId" to "gti")
             )
         )
 
@@ -312,7 +312,7 @@ class WebSocketBrokerControllerTest {
 
         assertEquals("PLAYER_JOINED", gameEvent.event)
         assertEquals("CustomBob", gameEvent.gameState!!.players[1].name)
-        assertEquals("gti", gameEvent.gameState!!.players[1].iconId)
+        assertEquals("gti", gameEvent.gameState.players[1].iconId)
     }
 
     @Test
@@ -354,9 +354,9 @@ class WebSocketBrokerControllerTest {
 
         val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
         assertNotNull(event.gameState!!.lastDiceRoll)
-        assertEquals(GamePhase.BUYING, event.gameState!!.phase)
+        assertEquals(GamePhase.BUYING, event.gameState.phase)
         assertTrue(event.message!!.contains("rolled"))
-        assertTrue(event.message!!.contains("="))
+        assertTrue(event.message.contains("="))
     }
 
     @Test
@@ -372,14 +372,14 @@ class WebSocketBrokerControllerTest {
         val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
         assertEquals("STATE_SNAPSHOT", event.event)
         assertEquals(3, event.gameState!!.players.size)
-        assertEquals("Alice", event.gameState!!.players[0].name)
-        assertEquals("Bob", event.gameState!!.players[1].name)
-        assertEquals("Charlie", event.gameState!!.players[2].name)
+        assertEquals("Alice", event.gameState.players[0].name)
+        assertEquals("Bob", event.gameState.players[1].name)
+        assertEquals("Charlie", event.gameState.players[2].name)
     }
 
     @Test
     fun `createGame initializes board with 40 fields`() {
-        val (controller, gameController, messagingTemplate) = createController()
+        val (controller, gameController) = createController().let { it.first to it.second }
 
         controller.createGame(Player(id = "host-1", name = "Alice"))
 
@@ -395,7 +395,7 @@ class WebSocketBrokerControllerTest {
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
 
-        controller.joinGame(GameAction(gameId = gameState.gameId, playerId = "player-2", payload = mapOf("name" to "Bob")))
+        controller.joinGame(GameAction(gameId = gameState.gameId, playerId = "player-2", payload = mutableMapOf("name" to "Bob")))
 
         val messages = captureMessages(messagingTemplate, 2)
         val gameEvent = messages.first { it.first == "/topic/game/${gameState.gameId}" }.second as GameEvent
@@ -428,6 +428,68 @@ class WebSocketBrokerControllerTest {
     }
 
     @Test
+    fun `joinGame should emit error when game has already started`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        // Start the game — phase becomes ROLLING
+        gameState.advanceTurn()
+
+        // A fresh player (not a rejoin) tries to join an already-started game
+        controller.joinGame(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "intruder",
+                payload = mutableMapOf("name" to "Intruder")
+            )
+        )
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ERROR", event.event)
+        assertEquals(gameState.gameId, event.gameId)
+        // The existing gameState is included in the error response
+        assertNotNull(event.gameState)
+        assertEquals(gameState.gameId, event.gameState!!.gameId)
+        assertEquals(gameState.players.size, event.gameState.players.size)
+        assertTrue(event.message!!.contains("not a participant"))
+    }
+
+    @Test
+    fun `joinGame should emit error when game is full`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+
+        // Fill the game to max capacity
+        repeat(gameController.maxPlayersPerGame) { index ->
+            gameController.joinGame(
+                gameState.gameId,
+                Player(id = "player-$index", name = "Player $index")
+            )
+        }
+
+        // Attempt to join one more player
+        controller.joinGame(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "overflow-player",
+                payload = mutableMapOf("name" to "Overflow")
+            )
+        )
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ERROR", event.event)
+        assertEquals(gameState.gameId, event.gameId)
+        // The existing gameState is included in the error response
+        assertNotNull(event.gameState)
+        assertEquals(gameState.gameId, event.gameState!!.gameId)
+        assertEquals(5, event.gameState.players.size)
+        assertTrue(event.message!!.contains("already full"))
+    }
+
+    @Test
     fun `joinGame should normalize blank icon from payload to default`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
@@ -437,7 +499,7 @@ class WebSocketBrokerControllerTest {
             GameAction(
                 gameId = gameState.gameId,
                 playerId = "player-2",
-                payload = mapOf(
+                payload = mutableMapOf(
                     "name" to "Bob",
                     "iconId" to "   "
                 )
@@ -449,7 +511,7 @@ class WebSocketBrokerControllerTest {
 
         assertEquals("PLAYER_JOINED", event.event)
         assertEquals("Bob", event.gameState!!.players[1].name)
-        assertEquals("lindwurm", event.gameState!!.players[1].iconId)
+        assertEquals("lindwurm", event.gameState.players[1].iconId)
     }
 
     @Test
@@ -505,5 +567,64 @@ class WebSocketBrokerControllerTest {
 
         assertEquals("TURN_ENDED", event.event)
         assertEquals("Bob", event.gameState!!.currentPlayer!!.name)
+    }
+
+    @Test
+    fun `handleAction ROLL_DICE with cheat payload true should force double six`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+
+        // Spiel starten/Runde voranschreiten lassen (Phase = ROLLING)
+        gameState.advanceTurn()
+
+        // Act: Aktion mit Cheat-Flag senden
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "ROLL_DICE",
+                payload = mutableMapOf("cheat" to "true")
+            )
+        )
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+
+        // Assert: Prüfen, ob der If-Zweig (die1=6, die2=6) ausgeführt wurde
+        assertEquals("DICE_ROLLED", event.event)
+        assertEquals(GamePhase.BUYING, gameState.phase)
+        assertNotNull(gameState.lastDiceRoll)
+
+        assertEquals(6, gameState.lastDiceRoll!!.die1, "Die 1 muss bei Cheat exakt 6 sein")
+        assertEquals(6, gameState.lastDiceRoll!!.die2, "Die 2 muss bei Cheat exakt 6 sein")
+    }
+
+    @Test
+    fun `handleAction ROLL_DICE with explicit cheat false should roll normal dice`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+
+        // Spiel starten/Runde voranschreiten lassen (Phase = ROLLING)
+        gameState.advanceTurn()
+
+        // Act: Aktion mit explizitem Cheat = false senden
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "ROLL_DICE",
+                payload = mutableMapOf("cheat" to "false")
+            )
+        )
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+
+        // Assert: Prüfen, ob der Else-Zweig (Zufall 1..6) ausgeführt wurde
+        assertEquals("DICE_ROLLED", event.event)
+        assertNotNull(gameState.lastDiceRoll)
+
+        assertTrue(gameState.lastDiceRoll!!.die1 in 1..6, "Die 1 muss zwischen 1 und 6 liegen")
+        assertTrue(gameState.lastDiceRoll!!.die2 in 1..6, "Die 2 muss zwischen 1 und 6 liegen")
     }
 }
