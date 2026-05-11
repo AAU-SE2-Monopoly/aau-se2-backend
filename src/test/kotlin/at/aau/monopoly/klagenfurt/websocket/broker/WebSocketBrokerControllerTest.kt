@@ -865,9 +865,21 @@ class WebSocketBrokerControllerTest {
         gameState.advanceTurn()
         gameState.currentPlayer!!.position = 7  // Chance field
 
-        // Draw 5 cards
+        // Draw 5 cards.
+        // Reset hasDrawnCardThisTurn manually because this test checks deck cycling,
+        // not the one-card-per-turn rule.
         repeat(5) {
-            controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "DRAW_CARD", payload = mutableMapOf("cardType" to "CHANCE")))
+            controller.handleAction(
+                GameAction(
+                    gameId = gameState.gameId,
+                    playerId = "host-1",
+                    action = "DRAW_CARD",
+                    payload = mutableMapOf("cardType" to "CHANCE")
+                )
+            )
+
+            gameState.hasDrawnCardThisTurn = false
+            gameState.currentActionCard = null
         }
 
         assertEquals(11, gameState.chanceCards.size)  // 16 - 5 drawn
@@ -1051,5 +1063,37 @@ class WebSocketBrokerControllerTest {
 
         assertEquals("ERROR", event.event)
         assertTrue(event.message!!.contains("must be on a COMMUNITY_CHEST field"))
+    }
+
+    @Test
+    fun `drawCard should emit error when player already drew card this turn`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.advanceTurn()
+        gameState.currentPlayer!!.position = 7
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DRAW_CARD",
+                payload = mutableMapOf("cardType" to "CHANCE")
+            )
+        )
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DRAW_CARD",
+                payload = mutableMapOf("cardType" to "CHANCE")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("only draw one card per turn"))
     }
 }
