@@ -23,6 +23,8 @@ import org.springframework.messaging.simp.SimpMessagingTemplate
 import org.springframework.web.socket.CloseStatus
 import org.springframework.web.socket.messaging.SessionDisconnectEvent
 import java.security.Principal
+import at.aau.monopoly.klagenfurt.model.field.RailroadField
+import at.aau.monopoly.klagenfurt.model.field.UtilityField
 
 class WebSocketBrokerControllerTest {
 
@@ -1120,23 +1122,43 @@ class WebSocketBrokerControllerTest {
     @Test
     fun `executeAction should leave player state unchanged when action player does not exist`() {
         val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame()
-        gameController.joinGame(gameState.gameId, Player(id = "player-1", name = "Alice", money = 1000))
 
-        gameState.currentActionCard = CommunityChestCard(
-            id = 11,
-            description = "Collect money",
-            action = CardAction.COLLECT_MONEY,
+        val gameState = gameController.createGame(hostPlayerId = "player-1")
+
+        gameController.joinGame(
+            gameState.gameId,
+            Player(id = "player-1", name = "Alice")
+        )
+
+        gameState.advanceTurn()
+
+        val card = at.aau.monopoly.klagenfurt.model.card.ChanceCard(
+            id = 1,
+            description = "Collect \$200",
+            action = at.aau.monopoly.klagenfurt.model.enums.CardAction.COLLECT_MONEY,
             amount = 200
         )
 
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "missing-player", action = "EXECUTE_ACTION"))
+        gameState.currentActionCard = card
 
-        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "unknown-player",
+                action = "EXECUTE_ACTION"
+            )
+        )
 
-        assertEquals("ACTION_EXECUTED", event.event)
-        assertEquals(1000, gameState.players[0].money)
-        assertNull(gameState.currentActionCard)
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("It is not your turn"))
+
+        // Card must still exist because execution failed
+        assertNotNull(gameState.currentActionCard)
+
+        // Player money must remain unchanged
+        assertEquals(1500, gameState.players[0].money)
     }
 
     @Test
@@ -1403,7 +1425,14 @@ class WebSocketBrokerControllerTest {
     fun `buyProperty should successfully purchase an unowned property`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
-        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500))
+
+        gameController.joinGame(
+            gameState.gameId,
+            Player(id = "host-1", name = "Alice", money = 1500)
+        )
+
+        gameState.phase = GamePhase.BUYING
+        gameState.currentPlayer!!.position = 1
 
         controller.handleAction(
             GameAction(
@@ -1418,7 +1447,7 @@ class WebSocketBrokerControllerTest {
         val event = messages.single().second as GameEvent
 
         assertEquals("PROPERTY_BOUGHT", event.event)
-        assertEquals(1440, gameState.currentPlayer!!.money)  // 1500 - 60 (Herrengasse price)
+        assertEquals(1440, gameState.currentPlayer!!.money)
         assertEquals("host-1", (gameState.fields[1] as PropertyField).ownerId)
         assertTrue(event.message!!.contains("Alice bought"))
     }
@@ -1427,7 +1456,14 @@ class WebSocketBrokerControllerTest {
     fun `buyProperty should fail when property is already owned`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
-        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500))
+
+        gameController.joinGame(
+            gameState.gameId,
+            Player(id = "host-1", name = "Alice", money = 1500)
+        )
+
+        gameState.phase = GamePhase.BUYING
+        gameState.currentPlayer!!.position = 1
 
         val prop = gameState.fields[1] as PropertyField
         prop.ownerId = "other-player"
@@ -1442,29 +1478,38 @@ class WebSocketBrokerControllerTest {
         )
 
         val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+
         assertEquals("ERROR", event.event)
         assertTrue(event.message!!.contains("already owned"))
     }
-
     @Test
     fun `buyProperty should fail when player has insufficient funds`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
-        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 50))
+
+        gameController.joinGame(
+            gameState.gameId,
+            Player(id = "host-1", name = "Alice", money = 50)
+        )
+
+        gameState.phase = GamePhase.BUYING
+        gameState.currentPlayer!!.position = 1
 
         controller.handleAction(
             GameAction(
                 gameId = gameState.gameId,
                 playerId = "host-1",
                 action = "BUY_PROPERTY",
-                payload = mutableMapOf("fieldId" to "1")  // Herrengasse costs 60
+                payload = mutableMapOf("fieldId" to "1")
             )
         )
 
         val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+
         assertEquals("ERROR", event.event)
         assertTrue(event.message!!.contains("don't have enough money"))
     }
+
 
     @Test
     fun `buyProperty should fail when it's not the player's turn`() {
@@ -1491,7 +1536,14 @@ class WebSocketBrokerControllerTest {
     fun `buyProperty should fail for non-property field`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
-        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500))
+
+        gameController.joinGame(
+            gameState.gameId,
+            Player(id = "host-1", name = "Alice", money = 1500)
+        )
+
+        gameState.phase = GamePhase.BUYING
+        gameState.currentPlayer!!.position = 0
 
         controller.handleAction(
             GameAction(
@@ -1503,7 +1555,203 @@ class WebSocketBrokerControllerTest {
         )
 
         val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+
         assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("not a property"))
+        assertTrue(event.message!!.contains("cannot be bought"))
+    }
+
+    @Test
+    fun `buyProperty should fail when phase is not BUYING`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500))
+
+        gameState.phase = GamePhase.ROLLING
+        gameState.currentPlayer!!.position = 1
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "BUY_PROPERTY",
+                payload = mutableMapOf("fieldId" to "1")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("buying phase", ignoreCase = true))
+    }
+
+    @Test
+    fun `buyProperty should fail when player is not standing on requested field`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500))
+
+        gameState.phase = GamePhase.BUYING
+        gameState.currentPlayer!!.position = 2
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "BUY_PROPERTY",
+                payload = mutableMapOf("fieldId" to "1")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("currently standing on", ignoreCase = true))
+    }
+
+    @Test
+    fun `buyProperty should successfully purchase railroad field`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500))
+
+        gameState.phase = GamePhase.BUYING
+        gameState.currentPlayer!!.position = 5
+
+        val railroad = gameState.fields[5] as RailroadField
+        val price = railroad.price
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "BUY_PROPERTY",
+                payload = mutableMapOf("fieldId" to "5")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("PROPERTY_BOUGHT", event.event)
+        assertEquals(1500 - price, gameState.currentPlayer!!.money)
+        assertEquals("host-1", railroad.ownerId)
+        assertTrue(gameState.currentPlayer!!.ownedPropertyIds.contains(5))
+    }
+
+    @Test
+    fun `buyProperty should successfully purchase utility field`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500))
+
+        gameState.phase = GamePhase.BUYING
+        gameState.currentPlayer!!.position = 12
+
+        val utility = gameState.fields[12] as UtilityField
+        val price = utility.price
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "BUY_PROPERTY",
+                payload = mutableMapOf("fieldId" to "12")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("PROPERTY_BOUGHT", event.event)
+        assertEquals(1500 - price, gameState.currentPlayer!!.money)
+        assertEquals("host-1", utility.ownerId)
+        assertTrue(gameState.currentPlayer!!.ownedPropertyIds.contains(12))
+    }
+
+    @Test
+    fun `executeAction should fail when player is not current player`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+
+        val card = at.aau.monopoly.klagenfurt.model.card.ChanceCard(
+            id = 99,
+            description = "Collect money",
+            action = at.aau.monopoly.klagenfurt.model.enums.CardAction.COLLECT_MONEY,
+            amount = 100
+        )
+
+        gameState.currentActionCard = card
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "player-2",
+                action = "EXECUTE_ACTION"
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("It is not your turn"))
+        assertNotNull(gameState.currentActionCard)
+    }
+
+    @Test
+    fun `endTurn should reset hasDrawnCardThisTurn and currentActionCard`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+
+        gameState.hasDrawnCardThisTurn = true
+        gameState.currentActionCard = at.aau.monopoly.klagenfurt.model.card.ChanceCard(
+            id = 1,
+            description = "Collect money",
+            action = at.aau.monopoly.klagenfurt.model.enums.CardAction.COLLECT_MONEY,
+            amount = 100
+        )
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "END_TURN"
+            )
+        )
+
+        captureLastMessages(messagingTemplate, 1)
+
+        assertEquals(false, gameState.hasDrawnCardThisTurn)
+        assertNull(gameState.currentActionCard)
+        assertEquals(GamePhase.ROLLING, gameState.phase)
+    }
+
+    @Test
+    fun `executeAction MOVE_FORWARD should not grant money when not passing Go`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame()
+        val player = Player(id = "player-1", name = "Alice", position = 10, money = 1000)
+        gameController.joinGame(gameState.gameId, player)
+
+        gameState.currentActionCard = at.aau.monopoly.klagenfurt.model.card.ChanceCard(
+            id = 44,
+            description = "Move forward 3 spaces",
+            action = at.aau.monopoly.klagenfurt.model.enums.CardAction.MOVE_FORWARD,
+            moveSpaces = 3
+        )
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "player-1",
+                action = "EXECUTE_ACTION"
+            )
+        )
+
+        captureLastMessages(messagingTemplate, 1)
+
+        assertEquals(13, gameState.players[0].position)
+        assertEquals(1000, gameState.players[0].money)
     }
 }
