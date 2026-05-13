@@ -395,7 +395,13 @@ class WebSocketBrokerControllerTest {
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
 
-        controller.joinGame(GameAction(gameId = gameState.gameId, playerId = "player-2", payload = mutableMapOf("name" to "Bob")))
+        controller.joinGame(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "player-2",
+                payload = mutableMapOf("name" to "Bob")
+            )
+        )
 
         val messages = captureMessages(messagingTemplate, 2)
         val gameEvent = messages.first { it.first == "/topic/game/${gameState.gameId}" }.second as GameEvent
@@ -570,7 +576,6 @@ class WebSocketBrokerControllerTest {
     }
 
 
-
     @Test
     fun `drawChanceCard should move card from deck to currentActionCard`() {
         val (controller, gameController, messagingTemplate) = createController()
@@ -580,7 +585,14 @@ class WebSocketBrokerControllerTest {
         gameState.currentPlayer!!.position = 7  // Chance field
 
         val initialDeckSize = gameState.chanceCards.size
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "DRAW_CARD", payload = mutableMapOf("cardType" to "CHANCE")))
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DRAW_CARD",
+                payload = mutableMapOf("cardType" to "CHANCE")
+            )
+        )
 
         val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
 
@@ -598,7 +610,14 @@ class WebSocketBrokerControllerTest {
         gameState.currentPlayer!!.position = 2  // Community Chest field
 
         val initialDeckSize = gameState.communityChestCards.size
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "DRAW_CARD", payload = mutableMapOf("cardType" to "COMMUNITY_CHEST")))
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DRAW_CARD",
+                payload = mutableMapOf("cardType" to "COMMUNITY_CHEST")
+            )
+        )
 
         val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
 
@@ -616,7 +635,14 @@ class WebSocketBrokerControllerTest {
         gameState.currentPlayer!!.position = 7  // Chance field
         gameState.chanceCards.clear()
 
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "DRAW_CARD", payload = mutableMapOf("cardType" to "CHANCE")))
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DRAW_CARD",
+                payload = mutableMapOf("cardType" to "CHANCE")
+            )
+        )
 
         assertNotNull(gameState.currentActionCard)
         assertEquals(15, gameState.chanceCards.size)  // 16 - 1 drawn
@@ -630,7 +656,14 @@ class WebSocketBrokerControllerTest {
         gameState.advanceTurn()
         gameState.currentPlayer!!.position = 7  // Chance field
 
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "DRAW_CARD", payload = mutableMapOf()))
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DRAW_CARD",
+                payload = mutableMapOf()
+            )
+        )
 
         val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
 
@@ -646,7 +679,14 @@ class WebSocketBrokerControllerTest {
         gameState.advanceTurn()
         gameState.currentPlayer!!.position = 7  // Chance field
 
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "DRAW_CARD", payload = mutableMapOf("cardType" to "INVALID")))
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DRAW_CARD",
+                payload = mutableMapOf("cardType" to "INVALID")
+            )
+        )
 
         val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
 
@@ -1106,7 +1146,14 @@ class WebSocketBrokerControllerTest {
         player.inJail = true
         gameState.advanceTurn()
 
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "ROLL_DICE", payload = mutableMapOf("cheat" to "true")))
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "ROLL_DICE",
+                payload = mutableMapOf("cheat" to "true")
+            )
+        )
 
         val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
         assertEquals("DICE_ROLLED", event.event)
@@ -1138,7 +1185,7 @@ class WebSocketBrokerControllerTest {
                 break
             }
             attempts++
-            if(attempts > 50) org.junit.jupiter.api.Assertions.fail<Unit>("Could not roll a non-doublet in 50 attempts")
+            if (attempts > 50) org.junit.jupiter.api.Assertions.fail<Unit>("Could not roll a non-doublet in 50 attempts")
         }
     }
 
@@ -1167,7 +1214,7 @@ class WebSocketBrokerControllerTest {
                 break
             }
             attempts++
-            if(attempts > 50) org.junit.jupiter.api.Assertions.fail<Unit>("Could not roll a non-doublet in 50 attempts")
+            if (attempts > 50) org.junit.jupiter.api.Assertions.fail<Unit>("Could not roll a non-doublet in 50 attempts")
         }
     }
 
@@ -1180,7 +1227,14 @@ class WebSocketBrokerControllerTest {
         player.consecutiveDoublets = 2
         gameState.advanceTurn()
 
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "ROLL_DICE", payload = mutableMapOf("cheat" to "true")))
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "ROLL_DICE",
+                payload = mutableMapOf("cheat" to "true")
+            )
+        )
 
         assertEquals(true, player.inJail)
         assertEquals(10, player.position)
@@ -1197,7 +1251,14 @@ class WebSocketBrokerControllerTest {
         player.position = 18 // 18 + 12 = 30
         gameState.advanceTurn()
 
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "ROLL_DICE", payload = mutableMapOf("cheat" to "true")))
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "ROLL_DICE",
+                payload = mutableMapOf("cheat" to "true")
+            )
+        )
 
         assertEquals(true, player.inJail)
         assertEquals(10, player.position)
@@ -1239,7 +1300,13 @@ class WebSocketBrokerControllerTest {
         gameState.advanceTurn()
 
         val wrongPlayerId = if (gameState.currentPlayer!!.id == "host-1") "player-2" else "host-1"
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = wrongPlayerId, action = "PAY_JAIL_FINE"))
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = wrongPlayerId,
+                action = "PAY_JAIL_FINE"
+            )
+        )
         val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
         assertEquals("ERROR", event.event)
         assertEquals("It is not your turn.", event.message)
@@ -1293,80 +1360,257 @@ class WebSocketBrokerControllerTest {
 
     @Test
     fun `USE_JAIL_CARD wrong player gets error`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame(hostPlayerId = "host-1")
-        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
-        gameState.advanceTurn()
+        fun `handleAction DRAW_CARD should fail when player not on correct field type`() {
+            val (controller, gameController, messagingTemplate) = createController()
+            val gameState = gameController.createGame(hostPlayerId = "host-1")
+            gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+            gameState.advanceTurn()
 
-        val wrongPlayerId = if (gameState.currentPlayer!!.id == "host-1") "player-2" else "host-1"
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = wrongPlayerId, action = "USE_JAIL_CARD"))
-        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals("ERROR", event.event)
-        assertEquals("It is not your turn.", event.message)
-    }
+            controller.handleAction(
+                GameAction(
+                    gameId = gameState.gameId,
+                    playerId = "host-1",
+                    action = "DRAW_CARD",
+                    payload = mutableMapOf("cardType" to "CHANCE")
+                )
+            )
 
-    @Test
-    fun `USE_JAIL_CARD not in jail gets error`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame(hostPlayerId = "host-1")
-        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameState.advanceTurn()
+            val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
 
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "USE_JAIL_CARD"))
-        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("not in jail"))
-    }
+            assertEquals("ERROR", event.event)
+            assertTrue(event.message!!.contains("must be on a CHANCE field"))
+        }
 
-    @Test
-    fun `USE_JAIL_CARD no card gets error`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame(hostPlayerId = "host-1")
-        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        val player = gameState.players[0]
-        player.inJail = true
-        player.getOutOfJailCards = 0
-        gameState.advanceTurn()
+        @Test
+        fun `handleAction DRAW_CARD should succeed on Chance field`() {
+            val (controller, gameController, messagingTemplate) = createController()
+            val gameState = gameController.createGame(hostPlayerId = "host-1")
+            gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+            gameState.advanceTurn()
 
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "USE_JAIL_CARD"))
-        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("do not have"))
-    }
+            gameState.currentPlayer!!.position = 7
 
-    @Test
-    fun `USE_JAIL_CARD success`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame(hostPlayerId = "host-1")
-        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        val player = gameState.players[0]
-        player.inJail = true
-        player.getOutOfJailCards = 1
-        gameState.advanceTurn()
+            controller.handleAction(
+                GameAction(
+                    gameId = gameState.gameId,
+                    playerId = "host-1",
+                    action = "DRAW_CARD",
+                    payload = mutableMapOf("cardType" to "CHANCE")
+                )
+            )
 
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "USE_JAIL_CARD"))
-        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals("JAIL_CARD_USED", event.event)
-        assertEquals(0, player.getOutOfJailCards)
-        assertEquals(false, player.inJail)
-    }
+            val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
 
-    @Test
-    fun `END_TURN with doublet gets another turn`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame(hostPlayerId = "host-1")
-        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        val player = gameState.players[0]
-        gameState.advanceTurn()
+            assertEquals("ACTION_DRAWN", event.event)
+            assertNotNull(gameState.currentActionCard)
+            assertTrue(event.message!!.contains("Card drawn"))
+        }
 
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "ROLL_DICE", payload = mutableMapOf("cheat" to "true")))
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "END_TURN"))
+        @Test
+        fun `handleAction DRAW_CARD should succeed on Community Chest field`() {
+            val (controller, gameController, messagingTemplate) = createController()
+            val gameState = gameController.createGame(hostPlayerId = "host-1")
+            gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+            gameState.advanceTurn()
 
-        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals("TURN_ENDED", event.event)
-        assertEquals(GamePhase.ROLLING, gameState.phase)
-        assertEquals("host-1", gameState.currentPlayer!!.id)
-        assertTrue(event.message!!.contains("gets another turn"))
+            gameState.currentPlayer!!.position = 2
+
+            controller.handleAction(
+                GameAction(
+                    gameId = gameState.gameId,
+                    playerId = "host-1",
+                    action = "DRAW_CARD",
+                    payload = mutableMapOf("cardType" to "COMMUNITY_CHEST")
+                )
+            )
+
+            val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+
+            assertEquals("ACTION_DRAWN", event.event)
+            assertNotNull(gameState.currentActionCard)
+            assertTrue(event.message!!.contains("Card drawn"))
+        }
+
+        @Test
+        fun `handleAction DRAW_CARD should fail when not player's turn`() {
+            val (controller, gameController, messagingTemplate) = createController()
+            val gameState = gameController.createGame(hostPlayerId = "host-1")
+            gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+            gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+            gameState.advanceTurn()
+
+            val wrongPlayerId = if (gameState.currentPlayer!!.id == "host-1") "player-2" else "host-1"
+            controller.handleAction(
+                GameAction(
+                    gameId = gameState.gameId,
+                    playerId = wrongPlayerId,
+                    action = "USE_JAIL_CARD"
+                )
+            )
+            val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+            assertEquals("ERROR", event.event)
+            assertEquals("It is not your turn.", event.message)
+        }
+
+        @Test
+        fun `USE_JAIL_CARD not in jail gets error`() {
+            val (controller, gameController, messagingTemplate) = createController()
+            val gameState = gameController.createGame(hostPlayerId = "host-1")
+            gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+            gameState.advanceTurn()
+
+            controller.handleAction(
+                GameAction(
+                    gameId = gameState.gameId,
+                    playerId = "host-1",
+                    action = "USE_JAIL_CARD"
+                )
+            )
+            val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+            assertEquals("ERROR", event.event)
+            assertTrue(event.message!!.contains("not in jail"))
+        }
+
+        @Test
+        fun `USE_JAIL_CARD no card gets error`() {
+            val (controller, gameController, messagingTemplate) = createController()
+            val gameState = gameController.createGame(hostPlayerId = "host-1")
+            gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+            val player = gameState.players[0]
+            player.inJail = true
+            player.getOutOfJailCards = 0
+            gameState.advanceTurn()
+
+            controller.handleAction(
+                GameAction(
+                    gameId = gameState.gameId,
+                    playerId = "host-1",
+                    action = "USE_JAIL_CARD"
+                )
+            )
+            val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+            assertEquals("ERROR", event.event)
+            assertTrue(event.message!!.contains("do not have"))
+        }
+
+        @Test
+        fun `USE_JAIL_CARD success`() {
+            val (controller, gameController, messagingTemplate) = createController()
+            val gameState = gameController.createGame(hostPlayerId = "host-1")
+            gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+            val player = gameState.players[0]
+            player.inJail = true
+            player.getOutOfJailCards = 1
+            gameState.advanceTurn()
+
+            controller.handleAction(
+                GameAction(
+                    gameId = gameState.gameId,
+                    playerId = "host-1",
+                    action = "USE_JAIL_CARD"
+                )
+            )
+            val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+            assertEquals("JAIL_CARD_USED", event.event)
+            assertEquals(0, player.getOutOfJailCards)
+            assertEquals(false, player.inJail)
+        }
+
+        @Test
+        fun `END_TURN with doublet gets another turn`() {
+            val (controller, gameController, messagingTemplate) = createController()
+            val gameState = gameController.createGame(hostPlayerId = "host-1")
+            gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+            val player = gameState.players[0]
+            gameState.advanceTurn()
+
+            controller.handleAction(
+                GameAction(
+                    gameId = gameState.gameId,
+                    playerId = "host-1",
+                    action = "ROLL_DICE",
+                    payload = mutableMapOf("cheat" to "true")
+                )
+            )
+            controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "END_TURN"))
+
+            var event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+            assertEquals("TURN_ENDED", event.event)
+            assertEquals(GamePhase.ROLLING, gameState.phase)
+            assertEquals("host-1", gameState.currentPlayer!!.id)
+            assertTrue(event.message!!.contains("gets another turn"))
+
+            // After advanceTurn(), it's Bob's (player-2) turn
+            // Alice tries to draw while it's not her turn
+            controller.handleAction(
+                GameAction(
+                    gameId = gameState.gameId,
+                    playerId = "host-1",
+                    action = "DRAW_CARD",
+                    payload = mutableMapOf("cardType" to "CHANCE")
+                )
+            )
+
+            event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+
+            assertEquals("ERROR", event.event)
+            assertTrue(event.message!!.contains("It is not your turn"))
+        }
+
+        @Test
+        fun `handleAction DRAW_CARD should fail with wrong field type`() {
+            val (controller, gameController, messagingTemplate) = createController()
+            val gameState = gameController.createGame(hostPlayerId = "host-1")
+            gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+            gameState.advanceTurn()
+
+            gameState.currentPlayer!!.position = 7
+
+            controller.handleAction(
+                GameAction(
+                    gameId = gameState.gameId,
+                    playerId = "host-1",
+                    action = "DRAW_CARD",
+                    payload = mutableMapOf("cardType" to "COMMUNITY_CHEST")
+                )
+            )
+
+            val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+
+            assertEquals("ERROR", event.event)
+            assertTrue(event.message!!.contains("must be on a COMMUNITY_CHEST field"))
+        }
+
+        @Test
+        fun `drawCard should emit error when player already drew card this turn`() {
+            val (controller, gameController, messagingTemplate) = createController()
+            val gameState = gameController.createGame(hostPlayerId = "host-1")
+            gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+            gameState.advanceTurn()
+            gameState.currentPlayer!!.position = 7
+
+            controller.handleAction(
+                GameAction(
+                    gameId = gameState.gameId,
+                    playerId = "host-1",
+                    action = "DRAW_CARD",
+                    payload = mutableMapOf("cardType" to "CHANCE")
+                )
+            )
+
+            controller.handleAction(
+                GameAction(
+                    gameId = gameState.gameId,
+                    playerId = "host-1",
+                    action = "DRAW_CARD",
+                    payload = mutableMapOf("cardType" to "CHANCE")
+                )
+            )
+
+            val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+
+            assertEquals("ERROR", event.event)
+            assertTrue(event.message!!.contains("only draw one card per turn"))
+        }
     }
 }
