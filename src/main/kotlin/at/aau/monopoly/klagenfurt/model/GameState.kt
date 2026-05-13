@@ -30,6 +30,8 @@ data class GameState(
             currentPlayerIndex = (currentPlayerIndex + 1) % players.size
         }
         phase = GamePhase.ROLLING
+        currentActionCard = null
+        hasDrawnCardThisTurn = false
     }
 
     /** Returns true when only one player has money / properties remaining. */

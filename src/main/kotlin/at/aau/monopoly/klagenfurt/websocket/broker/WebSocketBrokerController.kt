@@ -18,6 +18,8 @@ import org.springframework.messaging.handler.annotation.MessageMapping
 import org.springframework.messaging.simp.SimpMessagingTemplate
 import org.springframework.stereotype.Controller
 import org.springframework.web.socket.messaging.SessionDisconnectEvent
+import at.aau.monopoly.klagenfurt.model.field.RailroadField
+import at.aau.monopoly.klagenfurt.model.field.UtilityField
 
 @Controller
 class WebSocketBrokerController(
@@ -126,11 +128,9 @@ class WebSocketBrokerController(
      */
     @MessageMapping("/game/action")
     fun handleAction(action: GameAction) {
-        println("DiceDebug backend action=${action.action} gameId=${action.gameId} playerId=${action.playerId}")
-        println("DiceDebug backend action='${action.action}' length=${action.action.length}")
+
         val gameState = gameController.getGameState(action.gameId)
             ?: run {
-                println("DiceDebug backend ERROR game not found for gameId=${action.gameId}")
                 messagingTemplate.convertAndSend(
                     "/topic/game/${action.gameId}",
                     GameEvent(gameId = action.gameId, event = "ERROR", message = "Game not found.")
@@ -140,7 +140,6 @@ class WebSocketBrokerController(
 
         when (action.action) {
             "ROLL_DICE" -> {
-                println("DiceDebug backend ROLL_DICE currentPlayer=${gameState.currentPlayer?.id} phase=${gameState.phase}")
                 if (gameState.currentPlayer?.id != action.playerId) {
                     messagingTemplate.convertAndSend(
                         "/topic/game/${action.gameId}",
@@ -346,7 +345,6 @@ class WebSocketBrokerController(
             }
 
             "BUY_PROPERTY" -> {
-                // Validate it's the current player's turn
                 if (gameState.currentPlayer?.id != action.playerId) {
                     messagingTemplate.convertAndSend(
                         "/topic/game/${action.gameId}",
@@ -360,7 +358,19 @@ class WebSocketBrokerController(
                     return
                 }
 
-                // Get the field ID from payload
+                if (gameState.phase != GamePhase.BUYING) {
+                    messagingTemplate.convertAndSend(
+                        "/topic/game/${action.gameId}",
+                        GameEvent(
+                            gameId = action.gameId,
+                            event = "ERROR",
+                            gameState = gameState,
+                            message = "Property can only be bought during the buying phase."
+                        )
+                    )
+                    return
+                }
+
                 val fieldIdStr = action.payload["fieldId"]
                 if (fieldIdStr.isNullOrBlank()) {
                     messagingTemplate.convertAndSend(
@@ -368,6 +378,7 @@ class WebSocketBrokerController(
                         GameEvent(
                             gameId = action.gameId,
                             event = "ERROR",
+                            gameState = gameState,
                             message = "fieldId must be specified in payload."
                         )
                     )
@@ -381,27 +392,56 @@ class WebSocketBrokerController(
                         GameEvent(
                             gameId = action.gameId,
                             event = "ERROR",
+                            gameState = gameState,
                             message = "Invalid fieldId."
                         )
                     )
                     return
                 }
 
-                val field = gameState.fields[fieldId]
-                if (field !is PropertyField) {
+                val player = gameState.currentPlayer!!
+
+                if (player.position != fieldId) {
                     messagingTemplate.convertAndSend(
                         "/topic/game/${action.gameId}",
                         GameEvent(
                             gameId = action.gameId,
                             event = "ERROR",
-                            message = "This field is not a property."
+                            gameState = gameState,
+                            message = "You can only buy the field you are currently standing on."
                         )
                     )
                     return
                 }
 
-                // Check if property is already owned
-                if (field.ownerId != null) {
+                val field = gameState.fields[fieldId]
+
+                val price = when (field) {
+                    is PropertyField -> field.price
+                    is RailroadField -> field.price
+                    is UtilityField -> field.price
+                    else -> {
+                        messagingTemplate.convertAndSend(
+                            "/topic/game/${action.gameId}",
+                            GameEvent(
+                                gameId = action.gameId,
+                                event = "ERROR",
+                                gameState = gameState,
+                                message = "This field cannot be bought."
+                            )
+                        )
+                        return
+                    }
+                }
+
+                val ownerId = when (field) {
+                    is PropertyField -> field.ownerId
+                    is RailroadField -> field.ownerId
+                    is UtilityField -> field.ownerId
+                    else -> null
+                }
+
+                if (ownerId != null) {
                     messagingTemplate.convertAndSend(
                         "/topic/game/${action.gameId}",
                         GameEvent(
@@ -414,24 +454,27 @@ class WebSocketBrokerController(
                     return
                 }
 
-                // Check if player has enough money
-                val player = gameState.currentPlayer!!
-                if (player.money < field.price) {
+                if (player.money < price) {
                     messagingTemplate.convertAndSend(
                         "/topic/game/${action.gameId}",
                         GameEvent(
                             gameId = action.gameId,
                             event = "ERROR",
                             gameState = gameState,
-                            message = "You don't have enough money to buy ${field.name}. Price: $${field.price}, Your Money: $${player.money}"
+                            message = "You don't have enough money to buy ${field.name}. Price: $$price, Your Money: $${player.money}"
                         )
                     )
                     return
                 }
 
-                // Buy the property
-                player.money -= field.price
-                field.ownerId = player.id
+                player.money -= price
+
+                when (field) {
+                    is PropertyField -> field.ownerId = player.id
+                    is RailroadField -> field.ownerId = player.id
+                    is UtilityField -> field.ownerId = player.id
+                }
+
                 player.ownedPropertyIds.add(fieldId)
 
                 messagingTemplate.convertAndSend(
@@ -440,7 +483,7 @@ class WebSocketBrokerController(
                         gameId = action.gameId,
                         event = "PROPERTY_BOUGHT",
                         gameState = gameState,
-                        message = "${player.name} bought ${field.name} for $${field.price}."
+                        message = "${player.name} bought ${field.name} for $$price."
                     )
                 )
             }
