@@ -165,6 +165,7 @@ class WebSocketBrokerController(
                 var eventMessage = "${player.name} rolled ${roll.die1} + ${roll.die2} = ${roll.total}."
                 
                 if (player.inJail) {
+                    println("in Jail")
                     if (roll.isDouble) {
                         player.inJail = false
                         player.jailTurns = 0

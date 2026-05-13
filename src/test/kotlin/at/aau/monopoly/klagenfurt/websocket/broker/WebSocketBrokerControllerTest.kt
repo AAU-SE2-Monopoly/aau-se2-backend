@@ -562,4 +562,277 @@ class WebSocketBrokerControllerTest {
         assertTrue(gameState.lastDiceRoll!!.die1 in 1..6, "Die 1 muss zwischen 1 und 6 liegen")
         assertTrue(gameState.lastDiceRoll!!.die2 in 1..6, "Die 2 muss zwischen 1 und 6 liegen")
     }
+
+    @Test
+    fun `handleAction ROLL_DICE in jail with doublet gets out of jail`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        val player = gameState.players[0]
+        player.inJail = true
+        gameState.advanceTurn()
+        
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "ROLL_DICE", payload = mutableMapOf("cheat" to "true")))
+        
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("DICE_ROLLED", event.event)
+        assertEquals(false, player.inJail)
+        assertEquals(0, player.jailTurns)
+        assertEquals(GamePhase.BUYING, gameState.phase)
+    }
+
+    @Test
+    fun `handleAction ROLL_DICE in jail without doublet increases jailTurns`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        val player = gameState.players[0]
+        player.inJail = true
+        player.jailTurns = 1
+        gameState.advanceTurn()
+        
+        var attempts = 0
+        while (true) {
+            gameState.phase = GamePhase.ROLLING
+            player.jailTurns = 1
+            controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "ROLL_DICE"))
+            val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+            if (!gameState.lastDiceRoll!!.isDouble) {
+                assertEquals(2, player.jailTurns)
+                assertEquals(true, player.inJail)
+                assertEquals(GamePhase.TURN_END, gameState.phase)
+                break
+            }
+            attempts++
+            if(attempts > 50) org.junit.jupiter.api.Assertions.fail<Unit>("Could not roll a non-doublet in 50 attempts")
+        }
+    }
+
+    @Test
+    fun `handleAction ROLL_DICE in jail fails 3rd time pays fine and gets out`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        val player = gameState.players[0]
+        
+        var attempts = 0
+        while (true) {
+            player.inJail = true
+            player.jailTurns = 2
+            player.money = 1000
+            gameState.phase = GamePhase.ROLLING
+            gameState.currentPlayerIndex = 0
+            
+            controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "ROLL_DICE"))
+            
+            if (!gameState.lastDiceRoll!!.isDouble) {
+                assertEquals(950, player.money)
+                assertEquals(false, player.inJail)
+                assertEquals(0, player.jailTurns)
+                assertEquals(GamePhase.BUYING, gameState.phase)
+                break
+            }
+            attempts++
+            if(attempts > 50) org.junit.jupiter.api.Assertions.fail<Unit>("Could not roll a non-doublet in 50 attempts")
+        }
+    }
+
+    @Test
+    fun `handleAction ROLL_DICE 3 doublets goes to jail`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        val player = gameState.players[0]
+        player.consecutiveDoublets = 2
+        gameState.advanceTurn()
+        
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "ROLL_DICE", payload = mutableMapOf("cheat" to "true")))
+        
+        assertEquals(true, player.inJail)
+        assertEquals(10, player.position)
+        assertEquals(0, player.consecutiveDoublets)
+        assertEquals(GamePhase.TURN_END, gameState.phase)
+    }
+
+    @Test
+    fun `handleAction ROLL_DICE lands on go to jail field with doublet`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        val player = gameState.players[0]
+        player.position = 18 // 18 + 12 = 30
+        gameState.advanceTurn()
+        
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "ROLL_DICE", payload = mutableMapOf("cheat" to "true")))
+        
+        assertEquals(true, player.inJail)
+        assertEquals(10, player.position)
+        assertEquals(GamePhase.TURN_END, gameState.phase)
+    }
+
+    @Test
+    fun `handleAction ROLL_DICE non-double lands on go to jail field`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        val player = gameState.players[0]
+        
+        var attempts = 0
+        while (true) {
+            gameState.phase = GamePhase.ROLLING
+            gameState.currentPlayerIndex = 0
+            player.position = 23 // Needs 7
+            player.inJail = false
+            
+            controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "ROLL_DICE"))
+            val roll = gameState.lastDiceRoll!!
+            
+            if (!roll.isDouble && player.position == 10 && player.inJail) {
+                assertEquals(GamePhase.TURN_END, gameState.phase)
+                break
+            }
+            attempts++
+            if (attempts > 500) org.junit.jupiter.api.Assertions.fail<Unit>("Could not roll a 7 in 500 attempts")
+        }
+    }
+
+    @Test
+    fun `PAY_JAIL_FINE wrong player gets error`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameState.advanceTurn()
+        
+        val wrongPlayerId = if (gameState.currentPlayer!!.id == "host-1") "player-2" else "host-1"
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = wrongPlayerId, action = "PAY_JAIL_FINE"))
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertEquals("It is not your turn.", event.message)
+    }
+
+    @Test
+    fun `PAY_JAIL_FINE not in jail gets error`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.advanceTurn()
+        
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "PAY_JAIL_FINE"))
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("not in jail"))
+    }
+
+    @Test
+    fun `PAY_JAIL_FINE not enough money gets error`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        val player = gameState.players[0]
+        player.inJail = true
+        player.money = 10
+        gameState.advanceTurn()
+        
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "PAY_JAIL_FINE"))
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("Not enough money"))
+    }
+
+    @Test
+    fun `PAY_JAIL_FINE success`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        val player = gameState.players[0]
+        player.inJail = true
+        player.money = 100
+        gameState.advanceTurn()
+        
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "PAY_JAIL_FINE"))
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("JAIL_FINE_PAID", event.event)
+        assertEquals(50, player.money)
+        assertEquals(false, player.inJail)
+    }
+
+    @Test
+    fun `USE_JAIL_CARD wrong player gets error`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameState.advanceTurn()
+        
+        val wrongPlayerId = if (gameState.currentPlayer!!.id == "host-1") "player-2" else "host-1"
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = wrongPlayerId, action = "USE_JAIL_CARD"))
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertEquals("It is not your turn.", event.message)
+    }
+
+    @Test
+    fun `USE_JAIL_CARD not in jail gets error`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.advanceTurn()
+        
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "USE_JAIL_CARD"))
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("not in jail"))
+    }
+
+    @Test
+    fun `USE_JAIL_CARD no card gets error`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        val player = gameState.players[0]
+        player.inJail = true
+        player.getOutOfJailCards = 0
+        gameState.advanceTurn()
+        
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "USE_JAIL_CARD"))
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("do not have"))
+    }
+
+    @Test
+    fun `USE_JAIL_CARD success`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        val player = gameState.players[0]
+        player.inJail = true
+        player.getOutOfJailCards = 1
+        gameState.advanceTurn()
+        
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "USE_JAIL_CARD"))
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("JAIL_CARD_USED", event.event)
+        assertEquals(0, player.getOutOfJailCards)
+        assertEquals(false, player.inJail)
+    }
+
+    @Test
+    fun `END_TURN with doublet gets another turn`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        val player = gameState.players[0]
+        gameState.advanceTurn()
+        
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "ROLL_DICE", payload = mutableMapOf("cheat" to "true")))
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "END_TURN"))
+        
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("TURN_ENDED", event.event)
+        assertEquals(GamePhase.ROLLING, gameState.phase)
+        assertEquals("host-1", gameState.currentPlayer!!.id)
+        assertTrue(event.message!!.contains("gets another turn"))
+    }
 }
