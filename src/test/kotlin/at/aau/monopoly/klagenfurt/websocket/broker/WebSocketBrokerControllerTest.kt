@@ -6,6 +6,7 @@ import at.aau.monopoly.klagenfurt.messaging.dtos.GameEvent
 import at.aau.monopoly.klagenfurt.messaging.dtos.LobbyEvent
 import at.aau.monopoly.klagenfurt.model.Player
 import at.aau.monopoly.klagenfurt.model.enums.GamePhase
+import at.aau.monopoly.klagenfurt.model.field.PropertyField
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
@@ -1095,5 +1096,113 @@ class WebSocketBrokerControllerTest {
 
         assertEquals("ERROR", event.event)
         assertTrue(event.message!!.contains("only draw one card per turn"))
+    }
+
+    @Test
+    fun `buyProperty should successfully purchase an unowned property`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500))
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "BUY_PROPERTY",
+                payload = mutableMapOf("fieldId" to "1")
+            )
+        )
+
+        val messages = captureLastMessages(messagingTemplate, 1)
+        val event = messages.single().second as GameEvent
+
+        assertEquals("PROPERTY_BOUGHT", event.event)
+        assertEquals(1440, gameState.currentPlayer!!.money)  // 1500 - 60 (Herrengasse price)
+        assertEquals("host-1", (gameState.fields[1] as PropertyField).ownerId)
+        assertTrue(event.message!!.contains("Alice bought"))
+    }
+
+    @Test
+    fun `buyProperty should fail when property is already owned`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500))
+
+        val prop = gameState.fields[1] as PropertyField
+        prop.ownerId = "other-player"
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "BUY_PROPERTY",
+                payload = mutableMapOf("fieldId" to "1")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("already owned"))
+    }
+
+    @Test
+    fun `buyProperty should fail when player has insufficient funds`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 50))
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "BUY_PROPERTY",
+                payload = mutableMapOf("fieldId" to "1")  // Herrengasse costs 60
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("don't have enough money"))
+    }
+
+    @Test
+    fun `buyProperty should fail when it's not the player's turn`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 1500))
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-2",
+                action = "BUY_PROPERTY",
+                payload = mutableMapOf("fieldId" to "1")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("It is not your turn"))
+    }
+
+    @Test
+    fun `buyProperty should fail for non-property field`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500))
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "BUY_PROPERTY",
+                payload = mutableMapOf("fieldId" to "0")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("not a property"))
     }
 }

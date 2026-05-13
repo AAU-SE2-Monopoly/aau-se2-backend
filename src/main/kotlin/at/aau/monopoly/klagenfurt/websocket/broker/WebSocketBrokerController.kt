@@ -11,6 +11,7 @@ import at.aau.monopoly.klagenfurt.model.enums.CardAction
 import at.aau.monopoly.klagenfurt.model.enums.GamePhase
 import at.aau.monopoly.klagenfurt.model.field.ChanceField
 import at.aau.monopoly.klagenfurt.model.field.CommunityChestField
+import at.aau.monopoly.klagenfurt.model.field.PropertyField
 import org.slf4j.LoggerFactory
 import org.springframework.context.event.EventListener
 import org.springframework.messaging.handler.annotation.MessageMapping
@@ -327,6 +328,106 @@ class WebSocketBrokerController(
                         event = "ACTION_EXECUTED",
                         gameState = gameState,
                         message = "Action executed: ${card.description}"
+                    )
+                )
+            }
+
+            "BUY_PROPERTY" -> {
+                // Validate it's the current player's turn
+                if (gameState.currentPlayer?.id != action.playerId) {
+                    messagingTemplate.convertAndSend(
+                        "/topic/game/${action.gameId}",
+                        GameEvent(
+                            gameId = action.gameId,
+                            event = "ERROR",
+                            gameState = gameState,
+                            message = "It is not your turn."
+                        )
+                    )
+                    return
+                }
+
+                // Get the field ID from payload
+                val fieldIdStr = action.payload["fieldId"]
+                if (fieldIdStr.isNullOrBlank()) {
+                    messagingTemplate.convertAndSend(
+                        "/topic/game/${action.gameId}",
+                        GameEvent(
+                            gameId = action.gameId,
+                            event = "ERROR",
+                            message = "fieldId must be specified in payload."
+                        )
+                    )
+                    return
+                }
+
+                val fieldId = fieldIdStr.toIntOrNull()
+                if (fieldId == null || fieldId < 0 || fieldId >= gameState.fields.size) {
+                    messagingTemplate.convertAndSend(
+                        "/topic/game/${action.gameId}",
+                        GameEvent(
+                            gameId = action.gameId,
+                            event = "ERROR",
+                            message = "Invalid fieldId."
+                        )
+                    )
+                    return
+                }
+
+                val field = gameState.fields[fieldId]
+                if (field !is PropertyField) {
+                    messagingTemplate.convertAndSend(
+                        "/topic/game/${action.gameId}",
+                        GameEvent(
+                            gameId = action.gameId,
+                            event = "ERROR",
+                            message = "This field is not a property."
+                        )
+                    )
+                    return
+                }
+
+                // Check if property is already owned
+                if (field.ownerId != null) {
+                    messagingTemplate.convertAndSend(
+                        "/topic/game/${action.gameId}",
+                        GameEvent(
+                            gameId = action.gameId,
+                            event = "ERROR",
+                            gameState = gameState,
+                            message = "${field.name} is already owned by another player."
+                        )
+                    )
+                    return
+                }
+
+                // Check if player has enough money
+                val player = gameState.currentPlayer!!
+                if (player.money < field.price) {
+                    messagingTemplate.convertAndSend(
+                        "/topic/game/${action.gameId}",
+                        GameEvent(
+                            gameId = action.gameId,
+                            event = "ERROR",
+                            gameState = gameState,
+                            message = "You don't have enough money to buy ${field.name}. Price: $${field.price}, Your Money: $${player.money}"
+                        )
+                    )
+                    return
+                }
+
+                // Buy the property
+                player.money -= field.price
+                field.ownerId = player.id
+                player.ownedPropertyIds.add(fieldId)
+
+                messagingTemplate.convertAndSend(
+                    "/topic/game/${action.gameId}",
+                    GameEvent(
+                        gameId = action.gameId,
+                        event = "PROPERTY_BOUGHT",
+                        gameState = gameState,
+                        message = "${player.name} bought ${field.name} for $${field.price}."
                     )
                 )
             }
