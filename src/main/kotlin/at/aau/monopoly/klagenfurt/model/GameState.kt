@@ -34,6 +34,13 @@ data class GameState(
         hasDrawnCardThisTurn = false
     }
 
+    /** End the current player's turn without advancing to the next player yet.
+     *  Sets phase to TURN_END and clears the last dice roll. */
+    fun endCurrentTurn() {
+        phase = GamePhase.TURN_END
+        lastDiceRoll = null
+    }
+
     /** Returns true when only one player has money / properties remaining. */
     fun isGameOver(): Boolean = players.count { !it.isBankrupt() } <= 1
 }
