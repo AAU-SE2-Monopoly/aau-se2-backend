@@ -569,6 +569,52 @@ class WebSocketBrokerControllerTest {
         assertEquals("Bob", event.gameState!!.currentPlayer!!.name)
     }
 
+    @Test
+    fun `handleAction END_TURN should succeed when not in buying phase`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameState.phase = GamePhase.ROLLING
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "END_TURN"
+            )
+        )
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("TURN_ENDED", event.event)
+        assertEquals(GamePhase.ROLLING, event.gameState!!.phase)
+        assertEquals("Bob", event.gameState.currentPlayer!!.name)
+        assertTrue(event.message!!.contains("Bob"))
+    }
+
+    @Test
+    fun `handleAction END_TURN should broadcast only turn ended event`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameState.phase = GamePhase.BUYING
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "END_TURN"
+            )
+        )
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("TURN_ENDED", event.event)
+        assertEquals("Bob", event.gameState!!.currentPlayer!!.name)
+    }
+
     // ============ ACTION CARD TESTS ============
 
     @Test
