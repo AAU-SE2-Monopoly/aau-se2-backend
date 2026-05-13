@@ -304,6 +304,19 @@ class WebSocketBrokerController(
             }
 
             "EXECUTE_ACTION" -> {
+                if (gameState.currentPlayer?.id != action.playerId) {
+                    messagingTemplate.convertAndSend(
+                        "/topic/game/${action.gameId}",
+                        GameEvent(
+                            gameId = action.gameId,
+                            event = "ERROR",
+                            gameState = gameState,
+                            message = "It is not your turn."
+                        )
+                    )
+                    return
+                }
+
                 if (gameState.currentActionCard == null) {
                     messagingTemplate.convertAndSend(
                         "/topic/game/${action.gameId}",
