@@ -601,9 +601,11 @@ class WebSocketBrokerController(
             }
 
             CardAction.MOVE_FORWARD -> {
-                player.position = (player.position + card.moveSpaces) % 40
-                if (card.moveSpaces > 0) {
-                    // If advanced past Go, collect $200
+                val newPosition = player.position + card.moveSpaces
+
+                player.position = newPosition % 40
+
+                if (newPosition >= 40) {
                     player.money += 200
                 }
             }
