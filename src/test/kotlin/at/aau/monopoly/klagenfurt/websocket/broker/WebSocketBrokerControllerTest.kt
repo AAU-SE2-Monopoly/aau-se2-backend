@@ -4,7 +4,11 @@ import at.aau.monopoly.klagenfurt.controller.GameController
 import at.aau.monopoly.klagenfurt.messaging.dtos.GameAction
 import at.aau.monopoly.klagenfurt.messaging.dtos.GameEvent
 import at.aau.monopoly.klagenfurt.messaging.dtos.LobbyEvent
+import at.aau.monopoly.klagenfurt.model.DiceRoll
 import at.aau.monopoly.klagenfurt.model.Player
+import at.aau.monopoly.klagenfurt.model.card.ChanceCard
+import at.aau.monopoly.klagenfurt.model.card.CommunityChestCard
+import at.aau.monopoly.klagenfurt.model.enums.CardAction
 import at.aau.monopoly.klagenfurt.model.enums.GamePhase
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -13,7 +17,11 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.ArgumentCaptor
 import org.mockito.Mockito
+import org.springframework.messaging.support.MessageBuilder
 import org.springframework.messaging.simp.SimpMessagingTemplate
+import org.springframework.web.socket.CloseStatus
+import org.springframework.web.socket.messaging.SessionDisconnectEvent
+import java.security.Principal
 
 class WebSocketBrokerControllerTest {
 
@@ -138,6 +146,21 @@ class WebSocketBrokerControllerTest {
     }
 
     @Test
+    fun `startGame should broadcast started event when no current player exists`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+
+        controller.startGame(GameAction(gameId = gameState.gameId))
+
+        val messages = captureMessages(messagingTemplate, 2)
+        val gameEvent = messages.first { it.first == "/topic/game/${gameState.gameId}" }.second as GameEvent
+
+        assertEquals("GAME_STARTED", gameEvent.event)
+        assertNull(gameState.currentPlayer)
+        assertTrue(gameEvent.message!!.contains("null"))
+    }
+
+    @Test
     fun `handleAction should emit error when game does not exist`() {
         val (controller, _, messagingTemplate) = createController()
 
@@ -167,6 +190,43 @@ class WebSocketBrokerControllerTest {
         assertTrue(gameState.lastDiceRoll!!.die1 in 1..6)
         assertTrue(gameState.lastDiceRoll!!.die2 in 1..6)
         assertTrue(event.message!!.contains("Alice rolled"))
+    }
+
+    @Test
+    fun `handleAction ROLL_DICE should emit error when game has no current player`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "ROLL_DICE"))
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("It is not your turn"))
+    }
+
+    @Test
+    fun `handleAction ROLL_DICE should grant pass go bonus when player wraps around board`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", position = 35, money = 1500))
+        gameState.advanceTurn()
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "ROLL_DICE",
+                payload = mutableMapOf("cheat" to "true")
+            )
+        )
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("DICE_ROLLED", event.event)
+        assertEquals(7, gameState.currentPlayer!!.position)
+        assertEquals(1700, gameState.currentPlayer!!.money)
+        assertTrue(event.message!!.contains("passed Go"))
     }
 
     @Test
@@ -272,6 +332,44 @@ class WebSocketBrokerControllerTest {
 
         assertEquals("ERROR", event.event)
         assertTrue(event.message!!.contains("Only the host"))
+    }
+
+    @Test
+    fun `onSessionDisconnect should not remove players or broadcast when user is missing`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        val event = SessionDisconnectEvent(
+            this,
+            MessageBuilder.withPayload(ByteArray(0)).build(),
+            "session-1",
+            CloseStatus.NORMAL
+        )
+
+        controller.onSessionDisconnect(event)
+
+        assertEquals(1, gameState.players.size)
+        Mockito.verifyNoInteractions(messagingTemplate)
+    }
+
+    @Test
+    fun `onSessionDisconnect should not remove players or broadcast when user is present`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        val user = Principal { "Alice" }
+        val event = SessionDisconnectEvent(
+            this,
+            MessageBuilder.withPayload(ByteArray(0)).build(),
+            "session-1",
+            CloseStatus.NORMAL,
+            user
+        )
+
+        controller.onSessionDisconnect(event)
+
+        assertEquals(1, gameState.players.size)
+        Mockito.verifyNoInteractions(messagingTemplate)
     }
 
 
@@ -615,6 +713,54 @@ class WebSocketBrokerControllerTest {
         assertEquals("Bob", event.gameState!!.currentPlayer!!.name)
     }
 
+    @Test
+    fun `handleAction END_TURN should clear turn state before advancing`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameState.phase = GamePhase.BUYING
+        gameState.lastDiceRoll = DiceRoll(3, 4)
+        gameState.currentActionCard = ChanceCard(
+            id = 1,
+            description = "Advance to Go",
+            action = CardAction.MOVE_TO,
+            targetFieldId = 0
+        )
+        gameState.hasDrawnCardThisTurn = true
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "END_TURN"
+            )
+        )
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("TURN_ENDED", event.event)
+        assertEquals(GamePhase.ROLLING, gameState.phase)
+        assertNull(gameState.lastDiceRoll)
+        assertNull(gameState.currentActionCard)
+        assertEquals(false, gameState.hasDrawnCardThisTurn)
+        assertEquals("Bob", gameState.currentPlayer!!.name)
+    }
+
+    @Test
+    fun `handleAction END_TURN should broadcast null next player when game has no players`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "END_TURN"))
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("TURN_ENDED", event.event)
+        assertNull(event.gameState!!.currentPlayer)
+        assertTrue(event.message!!.contains("null"))
+    }
+
     // ============ ACTION CARD TESTS ============
 
     @Test
@@ -666,6 +812,31 @@ class WebSocketBrokerControllerTest {
 
         assertNotNull(gameState.currentActionCard)
         assertEquals(15, gameState.chanceCards.size)  // 16 - 1 drawn
+    }
+
+    @Test
+    fun `drawCommunityChestCard should reshuffle deck when empty`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.advanceTurn()
+        gameState.currentPlayer!!.position = 2  // Community Chest field
+        gameState.communityChestCards.clear()
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DRAW_CARD",
+                payload = mutableMapOf("cardType" to "COMMUNITY_CHEST")
+            )
+        )
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ACTION_DRAWN", event.event)
+        assertNotNull(gameState.currentActionCard)
+        assertEquals(15, gameState.communityChestCards.size)
     }
 
     @Test
@@ -764,6 +935,26 @@ class WebSocketBrokerControllerTest {
     }
 
     @Test
+    fun `executeAction MOVE_TO should not move player when target field is missing`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame()
+        gameController.joinGame(gameState.gameId, Player(id = "player-1", name = "Alice", position = 12))
+
+        gameState.currentActionCard = ChanceCard(
+            id = 9,
+            description = "Missing target",
+            action = CardAction.MOVE_TO
+        )
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "player-1", action = "EXECUTE_ACTION"))
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ACTION_EXECUTED", event.event)
+        assertEquals(12, gameState.players[0].position)
+    }
+
+    @Test
     fun `executeAction MOVE_TO backwards should grant $200`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame()
@@ -803,6 +994,28 @@ class WebSocketBrokerControllerTest {
 
         assertEquals(5, gameState.players[0].position)  // 35 + 10 = 45 % 40 = 5
         assertEquals(1200, gameState.players[0].money)  // +$200 for passing Go
+    }
+
+    @Test
+    fun `executeAction MOVE_FORWARD should not grant bonus when move spaces is zero`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame()
+        gameController.joinGame(gameState.gameId, Player(id = "player-1", name = "Alice", position = 20, money = 1000))
+
+        gameState.currentActionCard = ChanceCard(
+            id = 10,
+            description = "Stay put",
+            action = CardAction.MOVE_FORWARD,
+            moveSpaces = 0
+        )
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "player-1", action = "EXECUTE_ACTION"))
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ACTION_EXECUTED", event.event)
+        assertEquals(20, gameState.players[0].position)
+        assertEquals(1000, gameState.players[0].money)
     }
 
     @Test
@@ -901,6 +1114,28 @@ class WebSocketBrokerControllerTest {
 
         assertEquals("ERROR", event.event)
         assertTrue(event.message!!.contains("No action card to execute"))
+    }
+
+    @Test
+    fun `executeAction should leave player state unchanged when action player does not exist`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame()
+        gameController.joinGame(gameState.gameId, Player(id = "player-1", name = "Alice", money = 1000))
+
+        gameState.currentActionCard = CommunityChestCard(
+            id = 11,
+            description = "Collect money",
+            action = CardAction.COLLECT_MONEY,
+            amount = 200
+        )
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "missing-player", action = "EXECUTE_ACTION"))
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ACTION_EXECUTED", event.event)
+        assertEquals(1000, gameState.players[0].money)
+        assertNull(gameState.currentActionCard)
     }
 
     @Test
@@ -1072,6 +1307,26 @@ class WebSocketBrokerControllerTest {
 
         // After advanceTurn(), it's Bob's (player-2) turn
         // Alice tries to draw while it's not her turn
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DRAW_CARD",
+                payload = mutableMapOf("cardType" to "CHANCE")
+            )
+        )
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("It is not your turn"))
+    }
+
+    @Test
+    fun `handleAction DRAW_CARD should fail when game has no current player`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+
         controller.handleAction(
             GameAction(
                 gameId = gameState.gameId,
