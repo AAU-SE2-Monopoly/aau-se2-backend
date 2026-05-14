@@ -1481,6 +1481,7 @@ class WebSocketBrokerControllerTest {
         while (true) {
             gameState.phase = GamePhase.ROLLING
             player.jailTurns = 1
+            player.inJail = true
             controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "ROLL_DICE"))
             val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
             if (!gameState.lastDiceRoll!!.isDouble) {

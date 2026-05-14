@@ -182,18 +182,7 @@ class WebSocketBrokerController(
                 }
 
                 val roll = DiceRoll(die1, die2)
-                val player = gameState.currentPlayer!!
-                val oldPosition = player.position
-                val newPosition = (oldPosition + roll.total) % gameState.fields.size
-
-                // Pass-Go / land-on-Go bonus
-                if (newPosition < oldPosition && newPosition != 0) {
-                    player.money += 200
-                }
-
-                player.position = newPosition
                 gameState.lastDiceRoll = roll
-
                 val player = gameState.currentPlayer!!
                 var eventMessage = "${player.name} rolled ${roll.die1} + ${roll.die2} = ${roll.total}."
 
@@ -205,7 +194,7 @@ class WebSocketBrokerController(
                         eventMessage += " They rolled a doublet and got out of jail!"
 
                         val oldPos = player.position
-                        val newPos = (oldPos + roll.total) % 40
+                        val newPos = (oldPos + roll.total) % gameState.fields.size
                         player.position = newPos
 
                         player.consecutiveDoublets = 0
@@ -219,7 +208,7 @@ class WebSocketBrokerController(
                             eventMessage += " Failed 3rd attempt. Paid 50M to get out!"
 
                             val oldPos = player.position
-                            val newPos = (oldPos + roll.total) % 40
+                            val newPos = (oldPos + roll.total) % gameState.fields.size
                             player.position = newPos
                             gameState.phase = GamePhase.BUYING
                         } else {
@@ -240,8 +229,11 @@ class WebSocketBrokerController(
                         } else {
                             eventMessage += " Rolled a doublet! Gets another turn."
                             val oldPos = player.position
-                            val newPos = (oldPos + roll.total) % 40
-                            if (newPos < oldPos) player.money += 200
+                            val newPos = (oldPos + roll.total) % gameState.fields.size
+                            if (newPos < oldPos) {
+                                player.money += 200
+                                eventMessage += " and passed Go (+200€)."
+                            }
                             player.position = newPos
                             gameState.phase = GamePhase.BUYING
 
@@ -257,8 +249,11 @@ class WebSocketBrokerController(
                     } else {
                         player.consecutiveDoublets = 0
                         val oldPos = player.position
-                        val newPos = (oldPos + roll.total) % 40
-                        if (newPos < oldPos) player.money += 200
+                        val newPos = (oldPos + roll.total) % gameState.fields.size
+                        if (newPos < oldPos) {
+                            player.money += 200
+                            eventMessage += " and passed Go (+200€)."
+                        }
                         player.position = newPos
                         gameState.phase = GamePhase.BUYING
 
@@ -272,15 +267,12 @@ class WebSocketBrokerController(
                     }
                 }
 
-                val passGoMsg = if (newPosition < oldPosition) " and passed Go (+200€)" else ""
-
                 messagingTemplate.convertAndSend(
                     "/topic/game/${action.gameId}",
                     GameEvent(
                         gameId = action.gameId,
                         event = "DICE_ROLLED",
                         gameState = gameState,
-                        message = "${player.name} rolled ${roll.die1} + ${roll.die2} = ${roll.total}$passGoMsg."
                         message = eventMessage
                     )
                 )
@@ -343,19 +335,11 @@ class WebSocketBrokerController(
             }
 
             "END_TURN" -> {
-                gameState.endCurrentTurn()
-                gameState.advanceTurn()
-                messagingTemplate.convertAndSend(
-                    "/topic/game/${action.gameId}",
-                    GameEvent(
-                        gameId = action.gameId,
-                        event = "TURN_ENDED",
-                        gameState = gameState,
-                        message = "Next turn: ${gameState.currentPlayer?.name}."
-                    )
-                )
-                val player = gameState.currentPlayer!!
-                if (gameState.lastDiceRoll?.isDouble == true && !player.inJail && player.consecutiveDoublets > 0) {
+                val player = gameState.currentPlayer
+                val isDoublet = gameState.lastDiceRoll?.isDouble == true
+
+                if (player != null && isDoublet && !player.inJail && player.consecutiveDoublets > 0) {
+                    gameState.endCurrentTurn()
                     gameState.phase = GamePhase.ROLLING
                     messagingTemplate.convertAndSend(
                         "/topic/game/${action.gameId}",
@@ -367,7 +351,8 @@ class WebSocketBrokerController(
                         )
                     )
                 } else {
-                    player.consecutiveDoublets = 0 // Reset just in case
+                    if (player != null) player.consecutiveDoublets = 0 // Reset just in case
+                    gameState.endCurrentTurn()
                     gameState.advanceTurn()
                     messagingTemplate.convertAndSend(
                         "/topic/game/${action.gameId}",
