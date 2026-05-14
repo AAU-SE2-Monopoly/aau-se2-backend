@@ -2281,4 +2281,227 @@ class WebSocketBrokerControllerTest {
             assertEquals(1000, gameState.players[0].money)
         }
     }
+
+    @Test
+    fun `handleAction actions should emit error when no current player exists`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.currentPlayerIndex = -1 // Explicitly remove current player
+
+        val actions = listOf(
+            "ROLL_DICE", "PAY_JAIL_FINE", "USE_JAIL_CARD",
+            "DRAW_CARD", "EXECUTE_ACTION", "BUY_PROPERTY"
+        )
+
+        for (actionType in actions) {
+            Mockito.clearInvocations(messagingTemplate)
+            controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = actionType, payload = mutableMapOf("cardType" to "CHANCE", "fieldId" to "1")))
+            val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+            assertEquals("ERROR", event.event)
+            assertTrue(
+                event.message!!.contains("not your turn"), 
+                "Expected 'not your turn' error for $actionType when no current player exists, got: ${event.message}"
+            )
+        }
+    }
+
+    @Test
+    fun `handleAction unknown action should emit error`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "UNKNOWN_ACTION"))
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("Unknown action"))
+    }
+
+    @Test
+    fun `handleAction ROLL_DICE normal non-doublet passes go`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        val player = gameState.players[0]
+        gameState.currentPlayerIndex = -1
+        gameState.advanceTurn()
+        
+        var attempts = 0
+        while(true) {
+            Mockito.clearInvocations(messagingTemplate)
+            gameState.phase = GamePhase.ROLLING
+            player.position = 38
+            player.money = 1500
+            controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "ROLL_DICE"))
+            val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+            if (!gameState.lastDiceRoll!!.isDouble) {
+                assertEquals(1700, player.money)
+                assertTrue(event.message!!.contains("passed Go"))
+                break
+            }
+            attempts++
+            if (attempts > 50) org.junit.jupiter.api.Assertions.fail<Unit>("Could not roll non-doublet")
+        }
+    }
+
+    @Test
+    fun `handleAction DRAW_CARD errors`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.currentPlayerIndex = -1
+        gameState.advanceTurn()
+        
+        // Missing cardType
+        Mockito.clearInvocations(messagingTemplate)
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "DRAW_CARD"))
+        var event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("cardType must be specified"))
+
+        // Unknown cardType
+        Mockito.clearInvocations(messagingTemplate)
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "DRAW_CARD", payload = mutableMapOf("cardType" to "JUNK")))
+        event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("Unknown card type"))
+    }
+
+    @Test
+    fun `handleAction BUY_PROPERTY errors`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob"))
+        gameState.currentPlayerIndex = -1
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.BUYING
+        val player = gameState.players[0]
+        player.position = 1
+
+        // Missing fieldId
+        Mockito.clearInvocations(messagingTemplate)
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "BUY_PROPERTY"))
+        var event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        
+        // Invalid fieldId (-1)
+        Mockito.clearInvocations(messagingTemplate)
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "BUY_PROPERTY", payload = mutableMapOf("fieldId" to "-1")))
+        event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+
+        // Invalid fieldId (100)
+        Mockito.clearInvocations(messagingTemplate)
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "BUY_PROPERTY", payload = mutableMapOf("fieldId" to "100")))
+        event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+
+        // Not on field
+        Mockito.clearInvocations(messagingTemplate)
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "BUY_PROPERTY", payload = mutableMapOf("fieldId" to "3")))
+        event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("currently standing on"))
+
+        // Non-buyable field (Chance)
+        Mockito.clearInvocations(messagingTemplate)
+        player.position = 7
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "BUY_PROPERTY", payload = mutableMapOf("fieldId" to "7")))
+        event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("cannot be bought"))
+
+        // Already owned
+        Mockito.clearInvocations(messagingTemplate)
+        player.position = 1
+        val propField = gameState.fields[1] as at.aau.monopoly.klagenfurt.model.field.PropertyField
+        propField.ownerId = "host-2"
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "BUY_PROPERTY", payload = mutableMapOf("fieldId" to "1")))
+        event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("already owned"))
+        
+        // Not enough money
+        Mockito.clearInvocations(messagingTemplate)
+        propField.ownerId = null
+        player.money = 0
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "BUY_PROPERTY", payload = mutableMapOf("fieldId" to "1")))
+        event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("enough money"))
+    }
+
+    @Test
+    fun `handleAction USE_JAIL_CARD without cards`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.currentPlayerIndex = -1
+        gameState.advanceTurn()
+        val player = gameState.players[0]
+        player.inJail = true
+        player.getOutOfJailCards = 0
+        
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "USE_JAIL_CARD"))
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("do not have a Get Out of Jail Free card"))
+    }
+
+    @Test
+    fun `handleAction EXECUTE_ACTION no card`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.currentPlayerIndex = -1
+        gameState.advanceTurn()
+        
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "EXECUTE_ACTION"))
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("No action card"))
+    }
+
+    @Test
+    fun `handleAction END_TURN with doublet but in jail advances turn`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob"))
+        gameState.currentPlayerIndex = -1
+        gameState.advanceTurn()
+        
+        val player = gameState.players[0]
+        assertEquals("host-1", player.id)
+        
+        player.inJail = true
+        gameState.lastDiceRoll = at.aau.monopoly.klagenfurt.model.DiceRoll(2, 2)
+        player.consecutiveDoublets = 1
+        
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "END_TURN"))
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("TURN_ENDED", event.event)
+        assertEquals("host-2", gameState.currentPlayer!!.id)
+    }
+
+    @Test
+    fun `handleAction END_TURN with doublet but 0 consecutiveDoublets advances turn`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob"))
+        gameState.currentPlayerIndex = -1
+        gameState.advanceTurn()
+        
+        val player = gameState.players[0]
+        assertEquals("host-1", player.id)
+        
+        gameState.lastDiceRoll = at.aau.monopoly.klagenfurt.model.DiceRoll(2, 2)
+        player.consecutiveDoublets = 0
+        
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "END_TURN"))
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("TURN_ENDED", event.event)
+        assertEquals("host-2", gameState.currentPlayer!!.id)
+    }
 }
