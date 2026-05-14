@@ -31,3 +31,5 @@ build/
 
 *.DS_Store
 .gradle
+
+test_output.txt
