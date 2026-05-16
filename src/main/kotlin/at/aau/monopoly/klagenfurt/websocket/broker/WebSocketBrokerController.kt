@@ -225,7 +225,8 @@ class WebSocketBrokerController(
                             player.jailTurns = 0
                             player.consecutiveDoublets = 0
                             eventMessage += " Rolled 3 doublets! Go to Jail!"
-                            gameState.phase = GamePhase.TURN_END
+                            gameState.phase = GamePhase.BUYING
+
                         } else {
                             eventMessage += " Rolled a doublet! Gets another turn."
                             val oldPos = player.position
@@ -235,7 +236,7 @@ class WebSocketBrokerController(
                                 eventMessage += " and passed Go (+200€)."
                             }
                             player.position = newPos
-                            gameState.phase = GamePhase.BUYING
+                            gameState.phase = GamePhase.TURN_END
 
                             if (newPos == 30) { // Go to Jail Field
                                 player.inJail = true
