@@ -236,7 +236,7 @@ class WebSocketBrokerController(
                                 eventMessage += " and passed Go (+200€)."
                             }
                             player.position = newPos
-                            gameState.phase = GamePhase.TURN_END
+                            gameState.phase = GamePhase.BUYING
 
                             if (newPos == 30) { // Go to Jail Field
                                 player.inJail = true
