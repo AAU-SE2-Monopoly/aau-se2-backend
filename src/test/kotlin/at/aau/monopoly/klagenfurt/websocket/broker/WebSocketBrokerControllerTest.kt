@@ -2311,4 +2311,174 @@ class WebSocketBrokerControllerTest {
         assertEquals("TURN_ENDED", event.event)
         assertEquals("host-2", gameState.currentPlayer!!.id)
     }
+
+    @Test
+    fun `buyHouse should succeed when player owns complete color set`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500))
+
+        val player = gameState.currentPlayer!!
+        gameState.phase = GamePhase.BUYING
+
+        val property = gameState.fields[1] as PropertyField
+        val sameColorProperties = gameState.fields
+            .filterIsInstance<PropertyField>()
+            .filter { it.color == property.color }
+
+        sameColorProperties.forEach {
+            it.ownerId = player.id
+            player.ownedPropertyIds.add(it.id)
+        }
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = player.id,
+                action = "BUY_HOUSE",
+                payload = mutableMapOf("fieldId" to property.id.toString())
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("HOUSE_BOUGHT", event.event)
+        assertEquals(1, property.houses)
+        assertEquals(1500 - property.houseCost, player.money)
+    }
+
+    @Test
+    fun `buyHouse should fail without complete color set`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500))
+
+        val player = gameState.currentPlayer!!
+        gameState.phase = GamePhase.BUYING
+
+        val property = gameState.fields[1] as PropertyField
+        property.ownerId = player.id
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = player.id,
+                action = "BUY_HOUSE",
+                payload = mutableMapOf("fieldId" to property.id.toString())
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("complete color set"))
+    }
+
+    @Test
+    fun `buyHouse should fail when houses are not built evenly`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500))
+
+        val player = gameState.currentPlayer!!
+        gameState.phase = GamePhase.BUYING
+
+        val property = gameState.fields[1] as PropertyField
+        val sameColorProperties = gameState.fields
+            .filterIsInstance<PropertyField>()
+            .filter { it.color == property.color }
+
+        sameColorProperties.forEach {
+            it.ownerId = player.id
+            player.ownedPropertyIds.add(it.id)
+        }
+
+        property.houses = 1
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = player.id,
+                action = "BUY_HOUSE",
+                payload = mutableMapOf("fieldId" to property.id.toString())
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("evenly"))
+    }
+
+    @Test
+    fun `buyHotel should succeed when property has four houses`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500))
+
+        val player = gameState.currentPlayer!!
+        gameState.phase = GamePhase.BUYING
+
+        val property = gameState.fields[1] as PropertyField
+        val sameColorProperties = gameState.fields
+            .filterIsInstance<PropertyField>()
+            .filter { it.color == property.color }
+
+        sameColorProperties.forEach {
+            it.ownerId = player.id
+            it.houses = 4
+            player.ownedPropertyIds.add(it.id)
+        }
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = player.id,
+                action = "BUY_HOTEL",
+                payload = mutableMapOf("fieldId" to property.id.toString())
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("HOTEL_BOUGHT", event.event)
+        assertEquals(0, property.houses)
+        assertTrue(property.hasHotel)
+    }
+
+    @Test
+    fun `buyHotel should fail when property has less than four houses`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500))
+
+        val player = gameState.currentPlayer!!
+        gameState.phase = GamePhase.BUYING
+
+        val property = gameState.fields[1] as PropertyField
+        val sameColorProperties = gameState.fields
+            .filterIsInstance<PropertyField>()
+            .filter { it.color == property.color }
+
+        sameColorProperties.forEach {
+            it.ownerId = player.id
+            player.ownedPropertyIds.add(it.id)
+        }
+
+        property.houses = 3
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = player.id,
+                action = "BUY_HOTEL",
+                payload = mutableMapOf("fieldId" to property.id.toString())
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("4 houses"))
+    }
 }
