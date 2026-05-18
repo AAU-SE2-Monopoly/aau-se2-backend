@@ -646,6 +646,14 @@ class WebSocketBrokerController(
                 )
             }
 
+            "BUY_HOUSE" -> {
+                handleBuyHouse(action, gameState)
+            }
+
+            "BUY_HOTEL" -> {
+                handleBuyHotel(action, gameState)
+            }
+
             else -> {
                 messagingTemplate.convertAndSend(
                     "/topic/game/${action.gameId}",
@@ -841,5 +849,183 @@ class WebSocketBrokerController(
                 }
             }
         }
+
     }
+
+    private fun handleBuyHouse(
+        action: GameAction,
+        gameState: at.aau.monopoly.klagenfurt.model.GameState
+    ) {
+        val player = gameState.currentPlayer
+
+        if (player?.id != action.playerId) {
+            sendGameError(action, gameState, "It is not your turn.")
+            return
+        }
+
+        if (gameState.phase != GamePhase.BUYING && gameState.phase != GamePhase.TURN_END) {
+            sendGameError(action, gameState, "Houses can only be bought during your turn.")
+            return
+        }
+
+        val fieldId = action.payload["fieldId"]?.toIntOrNull()
+        if (fieldId == null || fieldId !in gameState.fields.indices) {
+            sendGameError(action, gameState, "Invalid fieldId.")
+            return
+        }
+
+        val property = gameState.fields[fieldId] as? PropertyField
+        if (property == null) {
+            sendGameError(action, gameState, "Only properties can have houses.")
+            return
+        }
+
+        if (property.ownerId != player.id) {
+            sendGameError(action, gameState, "You can only build on your own properties.")
+            return
+        }
+
+        if (!ownsCompleteColorSet(gameState, player.id, property)) {
+            sendGameError(action, gameState, "You need the complete color set to build houses.")
+            return
+        }
+
+        if (property.hasHotel) {
+            sendGameError(action, gameState, "This property already has a hotel.")
+            return
+        }
+
+        if (property.houses >= 4) {
+            sendGameError(action, gameState, "This property already has 4 houses.")
+            return
+        }
+
+        if (!canBuildHouseEvenly(gameState, property)) {
+            sendGameError(action, gameState, "Houses must be built evenly across the color set.")
+            return
+        }
+
+        if (player.money < property.houseCost) {
+            sendGameError(action, gameState, "Not enough money to buy a house.")
+            return
+        }
+
+        player.money -= property.houseCost
+        property.houses += 1
+
+        messagingTemplate.convertAndSend(
+            "/topic/game/${action.gameId}",
+            GameEvent(
+                gameId = action.gameId,
+                event = "HOUSE_BOUGHT",
+                gameState = gameState,
+                message = "${player.name} bought a house on ${property.name}."
+            )
+        )
+    }
+
+    private fun handleBuyHotel(
+        action: GameAction,
+        gameState: at.aau.monopoly.klagenfurt.model.GameState
+    ) {
+        val player = gameState.currentPlayer
+
+        if (player?.id != action.playerId) {
+            sendGameError(action, gameState, "It is not your turn.")
+            return
+        }
+
+        val fieldId = action.payload["fieldId"]?.toIntOrNull()
+        if (fieldId == null || fieldId !in gameState.fields.indices) {
+            sendGameError(action, gameState, "Invalid fieldId.")
+            return
+        }
+
+        val property = gameState.fields[fieldId] as? PropertyField
+        if (property == null) {
+            sendGameError(action, gameState, "Only properties can have hotels.")
+            return
+        }
+
+        if (property.ownerId != player.id) {
+            sendGameError(action, gameState, "You can only build on your own properties.")
+            return
+        }
+
+        if (!ownsCompleteColorSet(gameState, player.id, property)) {
+            sendGameError(action, gameState, "You need the complete color set to build a hotel.")
+            return
+        }
+
+        if (property.hasHotel) {
+            sendGameError(action, gameState, "This property already has a hotel.")
+            return
+        }
+
+        if (property.houses != 4) {
+            sendGameError(action, gameState, "You need 4 houses on this property before buying a hotel.")
+            return
+        }
+
+        if (player.money < property.hotelCost) {
+            sendGameError(action, gameState, "Not enough money to buy a hotel.")
+            return
+        }
+
+        player.money -= property.hotelCost
+        property.houses = 0
+        property.hasHotel = true
+
+        messagingTemplate.convertAndSend(
+            "/topic/game/${action.gameId}",
+            GameEvent(
+                gameId = action.gameId,
+                event = "HOTEL_BOUGHT",
+                gameState = gameState,
+                message = "${player.name} bought a hotel on ${property.name}."
+            )
+        )
+    }
+
+    private fun ownsCompleteColorSet(
+        gameState: at.aau.monopoly.klagenfurt.model.GameState,
+        playerId: String,
+        property: PropertyField
+    ): Boolean {
+        val colorSet = gameState.fields
+            .filterIsInstance<PropertyField>()
+            .filter { it.color == property.color }
+
+        return colorSet.all { it.ownerId == playerId }
+    }
+
+    private fun canBuildHouseEvenly(
+        gameState: at.aau.monopoly.klagenfurt.model.GameState,
+        property: PropertyField
+    ): Boolean {
+        val colorSet = gameState.fields
+            .filterIsInstance<PropertyField>()
+            .filter { it.color == property.color }
+
+        val minHouses = colorSet.minOf { it.houses }
+
+        return property.houses == minHouses
+    }
+
+    private fun sendGameError(
+        action: GameAction,
+        gameState: at.aau.monopoly.klagenfurt.model.GameState,
+        message: String
+    ) {
+        messagingTemplate.convertAndSend(
+            "/topic/game/${action.gameId}",
+            GameEvent(
+                gameId = action.gameId,
+                event = "ERROR",
+                gameState = gameState,
+                message = message
+            )
+        )
+    }
+
 }
