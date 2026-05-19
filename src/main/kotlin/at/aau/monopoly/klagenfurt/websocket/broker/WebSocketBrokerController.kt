@@ -11,9 +11,14 @@ import at.aau.monopoly.klagenfurt.model.enums.CardAction
 import at.aau.monopoly.klagenfurt.model.enums.GamePhase
 import at.aau.monopoly.klagenfurt.model.field.ChanceField
 import at.aau.monopoly.klagenfurt.model.field.CommunityChestField
+import at.aau.monopoly.klagenfurt.model.field.OwnableField
 import at.aau.monopoly.klagenfurt.model.field.PropertyField
 import at.aau.monopoly.klagenfurt.model.field.RailroadField
+import at.aau.monopoly.klagenfurt.model.field.TaxField
 import at.aau.monopoly.klagenfurt.model.field.UtilityField
+import at.aau.monopoly.klagenfurt.service.PaymentService
+import at.aau.monopoly.klagenfurt.service.RentCalculator
+import kotlin.math.ceil
 import org.slf4j.LoggerFactory
 import org.springframework.context.event.EventListener
 import org.springframework.messaging.handler.annotation.MessageMapping
@@ -277,6 +282,64 @@ class WebSocketBrokerController(
                         message = eventMessage
                     )
                 )
+
+                //Payment checks after movement
+                val landedField = gameState.fields.getOrNull(player.position)
+                if (landedField != null) {
+                    when (landedField) {
+                        is TaxField -> {
+                            val taxAmount = landedField.amount
+                            if (player.money >= taxAmount || PaymentService.canPayAfterAssets(player, gameState.fields, taxAmount)) {
+                                player.money -= taxAmount
+                                gameState.freeParkingMoney += taxAmount
+                            } else {
+                                gameState.phase = GamePhase.BANKRUPTCY
+                                gameState.pendingTaxAmount = taxAmount
+                                val taxEvent = GameEvent(gameId = action.gameId, event = GameEvent.TAX_DUE, gameState = gameState)
+                                messagingTemplate.convertAndSend("/topic/game/${action.gameId}", taxEvent)
+                            }
+                        }
+                        is OwnableField -> {
+                            val ownerId = landedField.ownerId
+                            if (ownerId != null && ownerId != player.id && !landedField.isMortgaged) {
+                                val owner = gameState.players.find { it.id == ownerId }
+                                if (owner != null && !owner.isBankrupt()) {
+                                    val rent = when (landedField) {
+                                        is PropertyField -> RentCalculator.calculatePropertyRent(landedField)
+                                        is RailroadField -> RentCalculator.calculateRailroadRent(landedField, gameState.fields, ownerId)
+                                        is UtilityField -> {
+                                            val diceTotal = (gameState.lastDiceRoll?.total ?: 0)
+                                            RentCalculator.calculateUtilityRent(landedField, gameState.fields, ownerId, diceTotal)
+                                        }
+                                        else -> 0
+                                    }
+                                    if (rent > 0) {
+                                        if (player.money >= rent || PaymentService.canPayAfterAssets(player, gameState.fields, rent)) {
+                                            player.money -= rent
+                                            owner.money += rent
+                                            val paidEvent = GameEvent(gameId = action.gameId, event = GameEvent.RENT_PAID, gameState = gameState)
+                                            messagingTemplate.convertAndSend("/topic/game/${action.gameId}", paidEvent)
+                                        } else {
+                                            gameState.phase = GamePhase.BANKRUPTCY
+                                            gameState.pendingRentAmount = rent
+                                            gameState.pendingRentOwnerId = ownerId
+                                            gameState.pendingRentFieldId = landedField.id
+                                            val dueEvent = GameEvent(gameId = action.gameId, event = GameEvent.RENT_DUE, gameState = gameState)
+                                            messagingTemplate.convertAndSend("/topic/game/${action.gameId}", dueEvent)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // Check for Free Parking (field index 20)
+                if (player.position == 20 && gameState.freeParkingMoney > 0) {
+                    player.money += gameState.freeParkingMoney
+                    gameState.freeParkingMoney = 0
+                    val fpEvent = GameEvent(gameId = action.gameId, event = GameEvent.FREE_PARKING_COLLECTED, gameState = gameState)
+                    messagingTemplate.convertAndSend("/topic/game/${action.gameId}", fpEvent)
+                }
             }
 
             "PAY_JAIL_FINE" -> {
@@ -646,12 +709,102 @@ class WebSocketBrokerController(
                 )
             }
 
+            "PAY_RENT" -> {
+                val player = gameState.currentPlayer ?: return
+                val fieldId = action.payload["fieldId"]?.toIntOrNull()
+                if (fieldId != null) {
+                    val field = gameState.fields.find { it.id == fieldId }
+                    if (field is OwnableField) {
+                        val ownerId = field.ownerId
+                        val rent = when (field) {
+                            is PropertyField -> RentCalculator.calculatePropertyRent(field)
+                            is RailroadField -> RentCalculator.calculateRailroadRent(field, gameState.fields, ownerId!!)
+                            is UtilityField -> {
+                                val diceTotal = action.payload["diceTotal"]?.toIntOrNull() ?: 0
+                                RentCalculator.calculateUtilityRent(field, gameState.fields, ownerId!!, diceTotal)
+                            }
+                            else -> 0
+                        }
+                        val owner = gameState.players.find { it.id == ownerId }
+                        if (owner != null && rent > 0) {
+                            player.money -= rent
+                            owner.money += rent
+                        }
+                        gameState.phase = GamePhase.TURN_END
+                        val event = GameEvent(gameId = action.gameId, event = GameEvent.RENT_PAID, gameState = gameState)
+                        messagingTemplate.convertAndSend("/topic/game/${action.gameId}", event)
+                    }
+                }
+            }
+
+            "MORTGAGE_PROPERTY" -> {
+                val player = gameState.currentPlayer ?: return
+                val fieldId = action.payload["fieldId"]?.toIntOrNull()
+                if (fieldId != null) {
+                    val field = gameState.fields.find { it.id == fieldId }
+                    if (field is OwnableField && field.ownerId == player.id && !field.isMortgaged) {
+                        PaymentService.mortgageProperty(player, field)
+                        val event = GameEvent(gameId = action.gameId, event = GameEvent.PROPERTY_MORTGAGED, gameState = gameState)
+                        messagingTemplate.convertAndSend("/topic/game/${action.gameId}", event)
+                    }
+                }
+            }
+
+            "UNMORTGAGE_PROPERTY" -> {
+                val player = gameState.currentPlayer ?: return
+                val fieldId = action.payload["fieldId"]?.toIntOrNull()
+                if (fieldId != null) {
+                    val field = gameState.fields.find { it.id == fieldId }
+                    if (field is OwnableField && field.ownerId == player.id && field.isMortgaged) {
+                        PaymentService.unmortgageProperty(player, field)
+                        val event = GameEvent(gameId = action.gameId, event = GameEvent.PROPERTY_UNMORTGAGED, gameState = gameState)
+                        messagingTemplate.convertAndSend("/topic/game/${action.gameId}", event)
+                    }
+                }
+            }
+
+            "SELL_HOUSE" -> {
+                val player = gameState.currentPlayer ?: return
+                val fieldId = action.payload["fieldId"]?.toIntOrNull()
+                if (fieldId != null) {
+                    val field = gameState.fields.find { it.id == fieldId }
+                    if (field is PropertyField && field.ownerId == player.id && (field.houses > 0 || field.hasHotel)) {
+                        if (field.hasHotel) {
+                            PaymentService.sellHotel(player, field)
+                        } else {
+                            PaymentService.sellHouse(player, field)
+                        }
+                        val event = GameEvent(gameId = action.gameId, event = GameEvent.HOUSE_SOLD, gameState = gameState)
+                        messagingTemplate.convertAndSend("/topic/game/${action.gameId}", event)
+                    }
+                }
+            }
+
+            "DECLARE_BANKRUPTCY" -> {
+                val player = gameState.currentPlayer ?: return
+                player.money = 0
+                // Transfer owned properties to the creditor
+                val creditorId = gameState.pendingRentOwnerId
+                if (creditorId != null) {
+                    gameState.fields.filterIsInstance<OwnableField>()
+                        .filter { it.ownerId == player.id }
+                        .forEach { it.ownerId = creditorId }
+                }
+                gameState.phase = GamePhase.TURN_END
+                gameState.pendingRentAmount = 0
+                gameState.pendingRentOwnerId = null
+                gameState.pendingRentFieldId = null
+                gameState.pendingTaxAmount = 0
+                val event = GameEvent(gameId = action.gameId, event = GameEvent.BANKRUPTCY_DECLARED, gameState = gameState)
+                messagingTemplate.convertAndSend("/topic/game/${action.gameId}", event)
+            }
+
             else -> {
                 messagingTemplate.convertAndSend(
                     "/topic/game/${action.gameId}",
                     GameEvent(gameId = action.gameId, event = "ERROR", message = "Unknown action: ${action.action}")
                 )
-}
+            }
         }
     }
 

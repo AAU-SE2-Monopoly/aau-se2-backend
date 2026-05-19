@@ -63,8 +63,8 @@ object PaymentService {
                 // Mortgage value
                 val price = when (field) {
                     is PropertyField -> field.price
-                    is at.aau.monopoly.klagenfurt.model.field.RailroadField -> field.price
-                    is at.aau.monopoly.klagenfurt.model.field.UtilityField -> field.price
+                    is RailroadField -> field.price
+                    is UtilityField -> field.price
                     else -> 0
                 }
                 if (!field.isMortgaged) {
