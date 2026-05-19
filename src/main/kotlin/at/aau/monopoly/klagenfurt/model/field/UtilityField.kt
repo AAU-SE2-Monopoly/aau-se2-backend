@@ -7,7 +7,7 @@ data class UtilityField(
     override val name: String,
     override val type: FieldType = FieldType.UTILITY,
     val price: Int = 150,
-    var ownerId: String? = null,
-    var isMortgaged: Boolean = false
+    override var ownerId: String? = null,
+    override var isMortgaged: Boolean = false
 ) : Field(id, name, type), OwnableField
 
