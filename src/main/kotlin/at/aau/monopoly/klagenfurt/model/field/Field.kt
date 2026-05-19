@@ -22,3 +22,9 @@ abstract class Field(
     open val name: String,
     open val type: FieldType
 )
+
+/** Interface for fields that can be owned. */
+interface OwnableField {
+    var ownerId: String?
+    var isMortgaged: Boolean
+}

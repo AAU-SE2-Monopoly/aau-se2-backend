@@ -19,6 +19,10 @@ data class GameState(
     val hostPlayerId: String = "", // the player who created the game (host)
     var currentActionCard: Card? = null, // Current action card (Chance/Community Chest) waiting for execution
     var hasDrawnCardThisTurn: Boolean = false // Track if player has already drawn a card this turn
+    var pendingRentAmount: Int = 0,
+    var pendingRentOwnerId: String? = null,
+    var pendingRentFieldId: Int? = null,
+    var pendingTaxAmount: Int = 0
 ) {
     /** The player whose turn it currently is. */
     val currentPlayer: Player?

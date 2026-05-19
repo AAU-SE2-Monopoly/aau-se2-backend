@@ -18,5 +18,5 @@ data class PropertyField(
     var houses: Int = 0,
     var hasHotel: Boolean = false,
     var isMortgaged: Boolean = false
-) : Field(id, name, type)
+) : Field(id, name, type), OwnableField
 

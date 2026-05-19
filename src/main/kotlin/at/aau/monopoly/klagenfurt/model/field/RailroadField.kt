@@ -10,5 +10,5 @@ data class RailroadField(
     val price: Int = 200,
     var ownerId: String? = null,
     var isMortgaged: Boolean = false
-) : Field(id, name, type)
+) : Field(id, name, type), OwnableField
 
