@@ -1,4 +1,4 @@
-package at.aau.monopoly.klagenfurt.Service
+package at.aau.monopoly.klagenfurt.service
 import at.aau.monopoly.klagenfurt.controller.GameController
 import at.aau.monopoly.klagenfurt.messaging.dtos.GameAction
 import at.aau.monopoly.klagenfurt.messaging.dtos.GameEvent

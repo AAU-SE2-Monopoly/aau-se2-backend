@@ -11,6 +11,7 @@ import at.aau.monopoly.klagenfurt.model.enums.CardAction
 import at.aau.monopoly.klagenfurt.model.enums.GamePhase
 import at.aau.monopoly.klagenfurt.model.field.ChanceField
 import at.aau.monopoly.klagenfurt.model.field.CommunityChestField
+import at.aau.monopoly.klagenfurt.model.field.FreeParkingField
 import at.aau.monopoly.klagenfurt.model.field.OwnableField
 import at.aau.monopoly.klagenfurt.model.field.PropertyField
 import at.aau.monopoly.klagenfurt.model.field.RailroadField
@@ -25,6 +26,7 @@ import org.springframework.messaging.handler.annotation.MessageMapping
 import org.springframework.messaging.simp.SimpMessagingTemplate
 import org.springframework.stereotype.Controller
 import org.springframework.web.socket.messaging.SessionDisconnectEvent
+import java.util.concurrent.ConcurrentHashMap
 
 
 @Controller
@@ -32,6 +34,8 @@ class WebSocketBrokerController(
     private val messagingTemplate: SimpMessagingTemplate,
     private val gameController: GameController
 ) {
+
+    private val gameLocks = ConcurrentHashMap<String, Any>()
 
     private fun normalizeIconId(iconId: String?): String =
         iconId?.takeIf { it.isNotBlank() } ?: "lindwurm"
@@ -134,6 +138,8 @@ class WebSocketBrokerController(
      */
     @MessageMapping("/game/action")
     fun handleAction(action: GameAction) {
+        val lock = gameLocks.computeIfAbsent(action.gameId) { Any() }
+        synchronized(lock) {
 
         val gameState = gameController.getGameState(action.gameId)
             ?: run {
@@ -283,21 +289,16 @@ class WebSocketBrokerController(
                     )
                 )
 
-                //Payment checks after movement
+                // interactive payment flow — always send RENT_DUE/TAX_DUE events, never auto-deduct
                 val landedField = gameState.fields.getOrNull(player.position)
                 if (landedField != null) {
                     when (landedField) {
                         is TaxField -> {
                             val taxAmount = landedField.amount
-                            if (player.money >= taxAmount || PaymentService.canPayAfterAssets(player, gameState.fields, taxAmount)) {
-                                player.money -= taxAmount
-                                gameState.freeParkingMoney += taxAmount
-                            } else {
-                                gameState.phase = GamePhase.BANKRUPTCY
-                                gameState.pendingTaxAmount = taxAmount
-                                val taxEvent = GameEvent(gameId = action.gameId, event = GameEvent.TAX_DUE, gameState = gameState)
-                                messagingTemplate.convertAndSend("/topic/game/${action.gameId}", taxEvent)
-                            }
+                            gameState.phase = GamePhase.PAYING_RENT
+                            gameState.pendingTaxAmount = taxAmount
+                            val taxEvent = GameEvent(gameId = action.gameId, event = GameEvent.TAX_DUE, gameState = gameState)
+                            messagingTemplate.convertAndSend("/topic/game/${action.gameId}", taxEvent)
                         }
                         is OwnableField -> {
                             val ownerId = landedField.ownerId
@@ -314,27 +315,20 @@ class WebSocketBrokerController(
                                         else -> 0
                                     }
                                     if (rent > 0) {
-                                        if (player.money >= rent || PaymentService.canPayAfterAssets(player, gameState.fields, rent)) {
-                                            player.money -= rent
-                                            owner.money += rent
-                                            val paidEvent = GameEvent(gameId = action.gameId, event = GameEvent.RENT_PAID, gameState = gameState)
-                                            messagingTemplate.convertAndSend("/topic/game/${action.gameId}", paidEvent)
-                                        } else {
-                                            gameState.phase = GamePhase.BANKRUPTCY
-                                            gameState.pendingRentAmount = rent
-                                            gameState.pendingRentOwnerId = ownerId
-                                            gameState.pendingRentFieldId = landedField.id
-                                            val dueEvent = GameEvent(gameId = action.gameId, event = GameEvent.RENT_DUE, gameState = gameState)
-                                            messagingTemplate.convertAndSend("/topic/game/${action.gameId}", dueEvent)
-                                        }
+                                        gameState.phase = GamePhase.PAYING_RENT
+                                        gameState.pendingRentAmount = rent
+                                        gameState.pendingRentOwnerId = ownerId
+                                        gameState.pendingRentFieldId = landedField.id
+                                        val dueEvent = GameEvent(gameId = action.gameId, event = GameEvent.RENT_DUE, gameState = gameState)
+                                        messagingTemplate.convertAndSend("/topic/game/${action.gameId}", dueEvent)
                                     }
                                 }
                             }
                         }
                     }
                 }
-                // Check for Free Parking (field index 20)
-                if (player.position == 20 && gameState.freeParkingMoney > 0) {
+                // Check for Free Parking using type check instead of hardcoded position 20
+                if (landedField is FreeParkingField && gameState.freeParkingMoney > 0) {
                     player.money += gameState.freeParkingMoney
                     gameState.freeParkingMoney = 0
                     val fpEvent = GameEvent(gameId = action.gameId, event = GameEvent.FREE_PARKING_COLLECTED, gameState = gameState)
@@ -397,8 +391,21 @@ class WebSocketBrokerController(
                     )
                 )
             }
-
+            //end turn safety
             "END_TURN" -> {
+                if (gameState.phase != GamePhase.BUYING && gameState.phase != GamePhase.TURN_END) {
+                    messagingTemplate.convertAndSend(
+                        "/topic/game/${action.gameId}",
+                        GameEvent(
+                            gameId = action.gameId,
+                            event = "ERROR",
+                            gameState = gameState,
+                            message = "Cannot end turn in the current phase (${gameState.phase.name})."
+                        )
+                    )
+                    return
+                }
+
                 val player = gameState.currentPlayer
                 val isDoublet = gameState.lastDiceRoll?.isDouble == true
 
@@ -727,38 +734,71 @@ class WebSocketBrokerController(
                         }
                         val owner = gameState.players.find { it.id == ownerId }
                         if (owner != null && rent > 0) {
+                            if (player.money < rent) {
+                                messagingTemplate.convertAndSend(
+                                    "/topic/game/${action.gameId}",
+                                    GameEvent(
+                                        gameId = action.gameId,
+                                        event = GameEvent.PAYMENT_FAILED,
+                                        gameState = gameState,
+                                        message = "Insufficient funds. Need $${rent}M but have $${player.money}M."
+                                    )
+                                )
+                                return
+                            }
                             player.money -= rent
                             owner.money += rent
                         }
                         gameState.phase = GamePhase.TURN_END
+                        gameState.pendingRentAmount = 0
+                        gameState.pendingRentOwnerId = null
+                        gameState.pendingRentFieldId = null
                         val event = GameEvent(gameId = action.gameId, event = GameEvent.RENT_PAID, gameState = gameState)
                         messagingTemplate.convertAndSend("/topic/game/${action.gameId}", event)
                     }
                 }
             }
 
+            //  houses/hotel check — cannot mortgage property with buildings
             "MORTGAGE_PROPERTY" -> {
                 val player = gameState.currentPlayer ?: return
                 val fieldId = action.payload["fieldId"]?.toIntOrNull()
                 if (fieldId != null) {
                     val field = gameState.fields.find { it.id == fieldId }
-                    if (field is OwnableField && field.ownerId == player.id && !field.isMortgaged) {
+                    // block mortgage if PropertyField has houses or hotel
+                    val hasBuildings = field is PropertyField && (field.houses > 0 || field.hasHotel)
+                    if (field is OwnableField && field.ownerId == player.id && !field.isMortgaged && !hasBuildings) {
                         PaymentService.mortgageProperty(player, field)
                         val event = GameEvent(gameId = action.gameId, event = GameEvent.PROPERTY_MORTGAGED, gameState = gameState)
                         messagingTemplate.convertAndSend("/topic/game/${action.gameId}", event)
+                    } else if (hasBuildings) {
+                        messagingTemplate.convertAndSend("/topic/game/${action.gameId}", GameEvent(gameId = action.gameId, event = "ERROR", message = "Sell all houses/hotels before mortgaging."))
                     }
                 }
             }
 
+            //  affordability check — player must have enough money to unmortgage
             "UNMORTGAGE_PROPERTY" -> {
                 val player = gameState.currentPlayer ?: return
                 val fieldId = action.payload["fieldId"]?.toIntOrNull()
                 if (fieldId != null) {
                     val field = gameState.fields.find { it.id == fieldId }
                     if (field is OwnableField && field.ownerId == player.id && field.isMortgaged) {
-                        PaymentService.unmortgageProperty(player, field)
-                        val event = GameEvent(gameId = action.gameId, event = GameEvent.PROPERTY_UNMORTGAGED, gameState = gameState)
-                        messagingTemplate.convertAndSend("/topic/game/${action.gameId}", event)
+                        // calculate unmortgage cost (price/2 + 10% interest)
+                        val price = when (field) {
+                            is PropertyField -> field.price
+                            is RailroadField -> field.price
+                            is UtilityField -> field.price
+                            else -> 0
+                        }
+                        val unmortgageCost = ceil(price / 2.0 * 1.1).toInt()
+                        if (player.money >= unmortgageCost) {
+                            PaymentService.unmortgageProperty(player, field)
+                            val event = GameEvent(gameId = action.gameId, event = GameEvent.PROPERTY_UNMORTGAGED, gameState = gameState)
+                            messagingTemplate.convertAndSend("/topic/game/${action.gameId}", event)
+                        } else {
+                            messagingTemplate.convertAndSend("/topic/game/${action.gameId}", GameEvent(gameId = action.gameId, event = "ERROR", message = "Not enough money to unmortgage. Need ${unmortgageCost}M."))
+                        }
                     }
                 }
             }
@@ -804,6 +844,7 @@ class WebSocketBrokerController(
                     "/topic/game/${action.gameId}",
                     GameEvent(gameId = action.gameId, event = "ERROR", message = "Unknown action: ${action.action}")
                 )
+            }
             }
         }
     }

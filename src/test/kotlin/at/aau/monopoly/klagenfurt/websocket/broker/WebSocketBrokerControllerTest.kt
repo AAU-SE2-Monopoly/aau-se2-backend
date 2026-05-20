@@ -237,6 +237,7 @@ class WebSocketBrokerControllerTest {
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
         gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameState.phase = GamePhase.BUYING
 
         controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "END_TURN"))
 
@@ -649,6 +650,7 @@ class WebSocketBrokerControllerTest {
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
         gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameState.phase = GamePhase.BUYING
 
         controller.handleAction(
             GameAction(
@@ -670,7 +672,7 @@ class WebSocketBrokerControllerTest {
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
         gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
-        gameState.phase = GamePhase.ROLLING
+        gameState.phase = GamePhase.TURN_END
 
         controller.handleAction(
             GameAction(
@@ -748,6 +750,7 @@ class WebSocketBrokerControllerTest {
     fun `handleAction END_TURN should broadcast null next player when game has no players`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameState.phase = GamePhase.BUYING
 
         controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "END_TURN"))
 
@@ -1420,6 +1423,7 @@ class WebSocketBrokerControllerTest {
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
         val player = gameState.players[0]
         player.inJail = true
+        player.position = 10
         gameState.advanceTurn()
 
         controller.handleAction(
@@ -1446,6 +1450,7 @@ class WebSocketBrokerControllerTest {
         val player = gameState.players[0]
         player.inJail = true
         player.jailTurns = 1
+        player.position = 10
         gameState.advanceTurn()
 
         var attempts = 0
@@ -1478,6 +1483,7 @@ class WebSocketBrokerControllerTest {
             player.inJail = true
             player.jailTurns = 2
             player.money = 1000
+            player.position = 10
             gameState.phase = GamePhase.ROLLING
             gameState.currentPlayerIndex = 0
 
@@ -1625,6 +1631,7 @@ class WebSocketBrokerControllerTest {
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
         val player = gameState.players[0]
         player.inJail = true
+        player.position = 10
         player.money = 100
         gameState.advanceTurn()
 
@@ -1704,6 +1711,7 @@ class WebSocketBrokerControllerTest {
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
         val player = gameState.players[0]
         player.inJail = true
+        player.position = 10
         player.getOutOfJailCards = 1
         gameState.advanceTurn()
 
@@ -2046,6 +2054,7 @@ class WebSocketBrokerControllerTest {
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
         gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameState.phase = GamePhase.BUYING
 
         gameState.hasDrawnCardThisTurn = true
         gameState.currentActionCard = ChanceCard(
@@ -2278,6 +2287,8 @@ class WebSocketBrokerControllerTest {
         gameState.currentPlayerIndex = -1
         gameState.advanceTurn()
 
+        gameState.phase = GamePhase.BUYING
+
         val player = gameState.players[0]
         assertEquals("host-1", player.id)
 
@@ -2299,6 +2310,8 @@ class WebSocketBrokerControllerTest {
         gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob"))
         gameState.currentPlayerIndex = -1
         gameState.advanceTurn()
+
+        gameState.phase = GamePhase.BUYING
 
         val player = gameState.players[0]
         assertEquals("host-1", player.id)

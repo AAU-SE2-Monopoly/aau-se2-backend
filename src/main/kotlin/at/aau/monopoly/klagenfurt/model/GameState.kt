@@ -36,6 +36,10 @@ data class GameState(
         phase = GamePhase.ROLLING
         currentActionCard = null
         hasDrawnCardThisTurn = false
+        pendingRentAmount = 0
+        pendingRentOwnerId = null
+        pendingRentFieldId = null
+        pendingTaxAmount = 0
     }
 
     /** End the current player's turn without advancing to the next player yet.
