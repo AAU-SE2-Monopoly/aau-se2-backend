@@ -733,43 +733,63 @@ class WebSocketBrokerController(
                     )
                     return
                 }
-                if (fieldId != null) {
-                    val field = gameState.fields.find { it.id == fieldId }
-                    if (field is OwnableField) {
-                        val ownerId = field.ownerId ?: return  // owner required for rent calculation
-                        val rent = when (field) {
-                            is PropertyField -> RentCalculator.calculatePropertyRent(field, gameState.fields, ownerId)
-                            is RailroadField -> RentCalculator.calculateRailroadRent(field, gameState.fields, ownerId)
-                            is UtilityField -> {
-                                val diceTotal = action.payload["diceTotal"]?.toIntOrNull() ?: 0
-                                RentCalculator.calculateUtilityRent(field, gameState.fields, ownerId, diceTotal)
-                            }
-                            else -> 0
+                val field = gameState.fields.find { it.id == fieldId }
+                if (field is OwnableField) {
+                    val ownerId = field.ownerId ?: return  // owner required for rent calculation
+                    val rent = when (field) {
+                        is PropertyField -> RentCalculator.calculatePropertyRent(field, gameState.fields, ownerId)
+                        is RailroadField -> RentCalculator.calculateRailroadRent(field, gameState.fields, ownerId)
+                        is UtilityField -> {
+                            val diceTotal = gameState.lastDiceRoll?.total ?: 0
+                            RentCalculator.calculateUtilityRent(field, gameState.fields, ownerId, diceTotal)
                         }
-                        val owner = gameState.players.find { it.id == ownerId }
-                        if (owner != null && rent > 0) {
-                            if (player.money < rent) {
-                                messagingTemplate.convertAndSend(
-                                    "/topic/game/${action.gameId}",
-                                    GameEvent(
-                                        gameId = action.gameId,
-                                        event = GameEvent.PAYMENT_FAILED,
-                                        gameState = gameState,
-                                        message = "Insufficient funds. Need $${rent}M but have $${player.money}M."
-                                    )
-                                )
-                                return
-                            }
-                            player.money -= rent
-                            owner.money += rent
-                        }
-                        gameState.phase = GamePhase.TURN_END
-                        gameState.pendingRentAmount = 0
-                        gameState.pendingRentOwnerId = null
-                        gameState.pendingRentFieldId = null
-                        val event = GameEvent(gameId = action.gameId, event = GameEvent.RENT_PAID, gameState = gameState)
-                        messagingTemplate.convertAndSend("/topic/game/${action.gameId}", event)
+                        else -> 0
                     }
+                    val owner = gameState.players.find { it.id == ownerId }
+                    if (owner != null && rent > 0) {
+                        if (player.money < rent) {
+                            messagingTemplate.convertAndSend(
+                                "/topic/game/${action.gameId}",
+                                GameEvent(
+                                    gameId = action.gameId,
+                                    event = GameEvent.PAYMENT_FAILED,
+                                    gameState = gameState,
+                                    message = "Insufficient funds. Need $${rent}M but have $${player.money}M."
+                                )
+                            )
+                            return
+                        }
+                        player.money -= rent
+                        owner.money += rent
+                    }
+                    gameState.phase = GamePhase.TURN_END
+                    gameState.pendingRentAmount = 0
+                    gameState.pendingRentOwnerId = null
+                    gameState.pendingRentFieldId = null
+                    val event = GameEvent(gameId = action.gameId, event = GameEvent.RENT_PAID, gameState = gameState)
+                    messagingTemplate.convertAndSend("/topic/game/${action.gameId}", event)
+                } else if (field is TaxField) {
+                    val taxAmount = gameState.pendingTaxAmount
+                    if (taxAmount > 0) {
+                        if (player.money < taxAmount) {
+                            messagingTemplate.convertAndSend(
+                                "/topic/game/${action.gameId}",
+                                GameEvent(
+                                    gameId = action.gameId,
+                                    event = GameEvent.PAYMENT_FAILED,
+                                    gameState = gameState,
+                                    message = "Insufficient funds. Need $${taxAmount}M but have $${player.money}M."
+                                )
+                            )
+                            return
+                        }
+                        player.money -= taxAmount
+                    }
+                    gameState.phase = GamePhase.TURN_END
+                    gameState.pendingTaxAmount = 0
+                    gameState.pendingTaxFieldId = null
+                    val event = GameEvent(gameId = action.gameId, event = GameEvent.RENT_PAID, gameState = gameState)
+                    messagingTemplate.convertAndSend("/topic/game/${action.gameId}", event)
                 }
             }
 
