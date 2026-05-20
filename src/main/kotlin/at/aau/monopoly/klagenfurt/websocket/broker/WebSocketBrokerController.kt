@@ -297,6 +297,7 @@ class WebSocketBrokerController(
                             val taxAmount = landedField.amount
                             gameState.phase = GamePhase.PAYING_RENT
                             gameState.pendingTaxAmount = taxAmount
+                            gameState.pendingTaxFieldId = landedField.id
                             val taxEvent = GameEvent(gameId = action.gameId, event = GameEvent.TAX_DUE, gameState = gameState)
                             messagingTemplate.convertAndSend("/topic/game/${action.gameId}", taxEvent)
                         }
@@ -326,13 +327,13 @@ class WebSocketBrokerController(
                             }
                         }
                     }
-                }
-                // Check for Free Parking using type check instead of hardcoded position 20
-                if (landedField is FreeParkingField && gameState.freeParkingMoney > 0) {
-                    player.money += gameState.freeParkingMoney
-                    gameState.freeParkingMoney = 0
-                    val fpEvent = GameEvent(gameId = action.gameId, event = GameEvent.FREE_PARKING_COLLECTED, gameState = gameState)
-                    messagingTemplate.convertAndSend("/topic/game/${action.gameId}", fpEvent)
+                    // Check for Free Parking using type check instead of hardcoded position 20
+                    if (landedField is FreeParkingField && gameState.freeParkingMoney > 0) {
+                        player.money += gameState.freeParkingMoney
+                        gameState.freeParkingMoney = 0
+                        val fpEvent = GameEvent(gameId = action.gameId, event = GameEvent.FREE_PARKING_COLLECTED, gameState = gameState)
+                        messagingTemplate.convertAndSend("/topic/game/${action.gameId}", fpEvent)
+                    }
                 }
             }
 
@@ -719,6 +720,19 @@ class WebSocketBrokerController(
             "PAY_RENT" -> {
                 val player = gameState.currentPlayer ?: return
                 val fieldId = action.payload["fieldId"]?.toIntOrNull()
+                // validate fieldId matches pending rent field
+                if (fieldId == null || fieldId != gameState.pendingRentFieldId) {
+                    messagingTemplate.convertAndSend(
+                        "/topic/game/${action.gameId}",
+                        GameEvent(
+                            gameId = action.gameId,
+                            event = "ERROR",
+                            gameState = gameState,
+                            message = "Invalid fieldId for rent payment. Expected: ${gameState.pendingRentFieldId}, got: $fieldId"
+                        )
+                    )
+                    return
+                }
                 if (fieldId != null) {
                     val field = gameState.fields.find { it.id == fieldId }
                     if (field is OwnableField) {
@@ -824,6 +838,21 @@ class WebSocketBrokerController(
                 val player = gameState.currentPlayer ?: return
                 val creditorId = gameState.pendingRentOwnerId
 
+                // Compute bankruptcy summary BEFORE processing
+                val ownedFields = gameState.fields.filterIsInstance<OwnableField>()
+                    .filter { it.ownerId == player.id }
+                val totalAssetValue = player.money + ownedFields.sumOf { f ->
+                    val price = when (f) {
+                        is PropertyField -> f.price
+                        is RailroadField -> f.price
+                        is UtilityField -> f.price
+                        else -> 0
+                    }
+                    price / 2  // mortgage value
+                }
+                val totalDebt = gameState.pendingRentAmount + gameState.pendingTaxAmount
+                val propertiesCount = ownedFields.size
+
                 //bankruptcy (tax debt) vs player-creditor bankruptcy
                 if (gameState.pendingTaxAmount > 0) {
                     // Cancel all mortgages on debtor's properties
@@ -872,6 +901,10 @@ class WebSocketBrokerController(
                 gameState.pendingRentOwnerId = null
                 gameState.pendingRentFieldId = null
                 gameState.pendingTaxAmount = 0
+                // include bankruptcy summary data in the event
+                gameState.bankruptcyTotalAssets = totalAssetValue
+                gameState.bankruptcyTotalDebt = totalDebt
+                gameState.bankruptcyPropertiesCount = propertiesCount
                 val event = GameEvent(gameId = action.gameId, event = GameEvent.BANKRUPTCY_DECLARED, gameState = gameState)
                 messagingTemplate.convertAndSend("/topic/game/${action.gameId}", event)
             }

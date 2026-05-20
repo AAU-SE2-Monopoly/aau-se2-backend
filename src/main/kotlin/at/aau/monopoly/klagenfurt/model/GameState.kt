@@ -22,7 +22,11 @@ data class GameState(
     var pendingRentAmount: Int = 0,
     var pendingRentOwnerId: String? = null,
     var pendingRentFieldId: Int? = null,
-    var pendingTaxAmount: Int = 0
+    var pendingTaxAmount: Int = 0,
+    var pendingTaxFieldId: Int? = null,
+    var bankruptcyTotalAssets: Int = 0,
+    var bankruptcyTotalDebt: Int = 0,
+    var bankruptcyPropertiesCount: Int = 0
 ) {
     /** The player whose turn it currently is. */
     val currentPlayer: Player?
@@ -40,6 +44,10 @@ data class GameState(
         pendingRentOwnerId = null
         pendingRentFieldId = null
         pendingTaxAmount = 0
+        pendingTaxFieldId = null
+        bankruptcyTotalAssets = 0
+        bankruptcyTotalDebt = 0
+        bankruptcyPropertiesCount = 0
     }
 
     /** End the current player's turn without advancing to the next player yet.
