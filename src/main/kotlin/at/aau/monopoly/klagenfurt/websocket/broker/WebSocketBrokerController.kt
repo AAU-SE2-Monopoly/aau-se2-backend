@@ -654,6 +654,14 @@ class WebSocketBrokerController(
                 handleBuyHotel(action, gameState)
             }
 
+            "SELL_HOUSE" -> {
+                handleSellHouse(action, gameState)
+            }
+
+            "SELL_HOTEL" -> {
+                handleSellHotel(action, gameState)
+            }
+
             else -> {
                 messagingTemplate.convertAndSend(
                     "/topic/game/${action.gameId}",
@@ -985,6 +993,124 @@ class WebSocketBrokerController(
                 message = "${player.name} bought a hotel on ${property.name}."
             )
         )
+    }
+
+    private fun handleSellHouse(
+        action: GameAction,
+        gameState: at.aau.monopoly.klagenfurt.model.GameState
+    ) {
+        val player = gameState.currentPlayer
+
+        if (player?.id != action.playerId) {
+            sendGameError(action, gameState, "It is not your turn.")
+            return
+        }
+
+        val fieldId = action.payload["fieldId"]?.toIntOrNull()
+        if (fieldId == null || fieldId !in gameState.fields.indices) {
+            sendGameError(action, gameState, "Invalid fieldId.")
+            return
+        }
+
+        val property = gameState.fields[fieldId] as? PropertyField
+        if (property == null) {
+            sendGameError(action, gameState, "Only properties can have houses.")
+            return
+        }
+
+        if (property.ownerId != player.id) {
+            sendGameError(action, gameState, "You can only sell houses from your own properties.")
+            return
+        }
+
+        if (property.hasHotel) {
+            sendGameError(action, gameState, "Sell the hotel before selling houses.")
+            return
+        }
+
+        if (property.houses <= 0) {
+            sendGameError(action, gameState, "This property has no houses to sell.")
+            return
+        }
+
+        if (!canSellHouseEvenly(gameState, property)) {
+            sendGameError(action, gameState, "Houses must be sold evenly across the color set.")
+            return
+        }
+
+        property.houses -= 1
+        player.money += property.houseCost / 2
+
+        messagingTemplate.convertAndSend(
+            "/topic/game/${action.gameId}",
+            GameEvent(
+                gameId = action.gameId,
+                event = "HOUSE_SOLD",
+                gameState = gameState,
+                message = "${player.name} sold a house on ${property.name}."
+            )
+        )
+    }
+
+    private fun handleSellHotel(
+        action: GameAction,
+        gameState: at.aau.monopoly.klagenfurt.model.GameState
+    ) {
+        val player = gameState.currentPlayer
+
+        if (player?.id != action.playerId) {
+            sendGameError(action, gameState, "It is not your turn.")
+            return
+        }
+
+        val fieldId = action.payload["fieldId"]?.toIntOrNull()
+        if (fieldId == null || fieldId !in gameState.fields.indices) {
+            sendGameError(action, gameState, "Invalid fieldId.")
+            return
+        }
+
+        val property = gameState.fields[fieldId] as? PropertyField
+        if (property == null) {
+            sendGameError(action, gameState, "Only properties can have hotels.")
+            return
+        }
+
+        if (property.ownerId != player.id) {
+            sendGameError(action, gameState, "You can only sell hotels from your own properties.")
+            return
+        }
+
+        if (!property.hasHotel) {
+            sendGameError(action, gameState, "This property has no hotel to sell.")
+            return
+        }
+
+        property.hasHotel = false
+        property.houses = 4
+        player.money += property.hotelCost / 2
+
+        messagingTemplate.convertAndSend(
+            "/topic/game/${action.gameId}",
+            GameEvent(
+                gameId = action.gameId,
+                event = "HOTEL_SOLD",
+                gameState = gameState,
+                message = "${player.name} sold a hotel on ${property.name}."
+            )
+        )
+    }
+
+    private fun canSellHouseEvenly(
+        gameState: at.aau.monopoly.klagenfurt.model.GameState,
+        property: PropertyField
+    ): Boolean {
+        val colorSet = gameState.fields
+            .filterIsInstance<PropertyField>()
+            .filter { it.color == property.color }
+
+        val maxHouses = colorSet.maxOf { it.houses }
+
+        return property.houses == maxHouses
     }
 
     private fun ownsCompleteColorSet(
