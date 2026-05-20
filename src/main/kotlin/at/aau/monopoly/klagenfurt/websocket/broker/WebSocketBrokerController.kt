@@ -306,7 +306,7 @@ class WebSocketBrokerController(
                                 val owner = gameState.players.find { it.id == ownerId }
                                 if (owner != null && !owner.isBankrupt()) {
                                     val rent = when (landedField) {
-                                        is PropertyField -> RentCalculator.calculatePropertyRent(landedField)
+                                        is PropertyField -> RentCalculator.calculatePropertyRent(landedField, gameState.fields, ownerId)
                                         is RailroadField -> RentCalculator.calculateRailroadRent(landedField, gameState.fields, ownerId)
                                         is UtilityField -> {
                                             val diceTotal = (gameState.lastDiceRoll?.total ?: 0)
@@ -722,13 +722,13 @@ class WebSocketBrokerController(
                 if (fieldId != null) {
                     val field = gameState.fields.find { it.id == fieldId }
                     if (field is OwnableField) {
-                        val ownerId = field.ownerId
+                        val ownerId = field.ownerId ?: return  // owner required for rent calculation
                         val rent = when (field) {
-                            is PropertyField -> RentCalculator.calculatePropertyRent(field)
-                            is RailroadField -> RentCalculator.calculateRailroadRent(field, gameState.fields, ownerId!!)
+                            is PropertyField -> RentCalculator.calculatePropertyRent(field, gameState.fields, ownerId)
+                            is RailroadField -> RentCalculator.calculateRailroadRent(field, gameState.fields, ownerId)
                             is UtilityField -> {
                                 val diceTotal = action.payload["diceTotal"]?.toIntOrNull() ?: 0
-                                RentCalculator.calculateUtilityRent(field, gameState.fields, ownerId!!, diceTotal)
+                                RentCalculator.calculateUtilityRent(field, gameState.fields, ownerId, diceTotal)
                             }
                             else -> 0
                         }
@@ -810,9 +810,9 @@ class WebSocketBrokerController(
                     val field = gameState.fields.find { it.id == fieldId }
                     if (field is PropertyField && field.ownerId == player.id && (field.houses > 0 || field.hasHotel)) {
                         if (field.hasHotel) {
-                            PaymentService.sellHotel(player, field)
+                            PaymentService.sellHotel(player, field, gameState.fields)
                         } else {
-                            PaymentService.sellHouse(player, field)
+                            PaymentService.sellHouse(player, field, gameState.fields)
                         }
                         val event = GameEvent(gameId = action.gameId, event = GameEvent.HOUSE_SOLD, gameState = gameState)
                         messagingTemplate.convertAndSend("/topic/game/${action.gameId}", event)
@@ -822,13 +822,50 @@ class WebSocketBrokerController(
 
             "DECLARE_BANKRUPTCY" -> {
                 val player = gameState.currentPlayer ?: return
-                player.money = 0
-                // Transfer owned properties to the creditor
                 val creditorId = gameState.pendingRentOwnerId
-                if (creditorId != null) {
+
+                //bankruptcy (tax debt) vs player-creditor bankruptcy
+                if (gameState.pendingTaxAmount > 0) {
+                    // Cancel all mortgages on debtor's properties
                     gameState.fields.filterIsInstance<OwnableField>()
                         .filter { it.ownerId == player.id }
-                        .forEach { it.ownerId = creditorId }
+                        .forEach { it.isMortgaged = false }
+                    // Return jail cards to bottom of decks (just discard them)
+                    player.getOutOfJailCards = 0
+                    player.money = 0
+                    // Clear ownership of all fields
+                    gameState.fields.filterIsInstance<OwnableField>()
+                        .filter { it.ownerId == player.id }
+                        .forEach { it.ownerId = null }
+                    player.ownedPropertyIds.clear()
+                    gameState.pendingTaxAmount = 0
+                } else if (creditorId != null) {
+                    //player-creditor bankruptcy
+                    val creditor = gameState.players.find { it.id == creditorId }
+                    player.money = 0
+                    // Transfer owned properties to the creditor
+                    val transferredIds = mutableListOf<Int>()
+                    gameState.fields
+                        .filter { it is OwnableField && it.ownerId == player.id }
+                        .forEach {
+                            (it as OwnableField).ownerId = creditorId
+                            transferredIds.add(it.id)
+                        }
+                    // transfer jail cards to creditor
+                    if (creditor != null) {
+                        creditor.getOutOfJailCards += player.getOutOfJailCards
+                        creditor.ownedPropertyIds.addAll(transferredIds)
+                    }
+                    player.getOutOfJailCards = 0
+                    player.ownedPropertyIds.clear()
+                } else {
+                    // fallback: no creditor, just zero out
+                    player.money = 0
+                    gameState.fields.filterIsInstance<OwnableField>()
+                        .filter { it.ownerId == player.id }
+                        .forEach { it.ownerId = null }
+                    player.ownedPropertyIds.clear()
+                    player.getOutOfJailCards = 0
                 }
                 gameState.phase = GamePhase.TURN_END
                 gameState.pendingRentAmount = 0

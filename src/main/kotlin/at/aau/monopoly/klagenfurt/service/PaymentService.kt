@@ -36,15 +36,40 @@ object PaymentService {
         return player
     }
 
-    fun sellHouse(player: Player, field: PropertyField): Player {
+    /**
+     * Sell one house from [field].
+     * Enforces even-building rule — no other property in the color group may
+     * have fewer houses than this property would have after the sale. If the rule
+     * would be violated, returns [player] unchanged.
+     */
+    fun sellHouse(player: Player, field: PropertyField, allFields: List<Field>): Player {
         if (field.houses <= 0) return player
+        val newHouseCount = field.houses - 1
+        // Even building rule: check all other properties in the same color group
+        val siblings = allFields.filterIsInstance<PropertyField>()
+            .filter { it.color == field.color && it.id != field.id && it.ownerId == player.id }
+        if (siblings.any { it.houses < newHouseCount }) {
+            return player // cannot sell — would violate even building rule
+        }
         field.houses -= 1
         player.money += field.houseCost / 2
         return player
     }
 
-    fun sellHotel(player: Player, field: PropertyField): Player {
+    /**
+     * Sell the hotel on [field], reverting to 4 houses.
+     *  Enforces even-building rule — all other properties in the color group
+     * must have at least 4 houses (or a hotel). If the rule would be violated,
+     * returns [player] unchanged.
+     */
+    fun sellHotel(player: Player, field: PropertyField, allFields: List<Field>): Player {
         if (!field.hasHotel) return player
+        // Even building rule: all siblings must have at least 4 houses (or hotel)
+        val siblings = allFields.filterIsInstance<PropertyField>()
+            .filter { it.color == field.color && it.id != field.id && it.ownerId == player.id }
+        if (siblings.any { it.houses < 4 && !it.hasHotel }) {
+            return player // cannot sell hotel — others don't have enough buildings
+        }
         field.hasHotel = false
         field.houses = 4 // revert to 4 houses
         player.money += field.hotelCost / 2

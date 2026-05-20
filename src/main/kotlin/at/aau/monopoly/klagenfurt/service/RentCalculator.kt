@@ -6,15 +6,35 @@ import at.aau.monopoly.klagenfurt.model.field.RailroadField
 import at.aau.monopoly.klagenfurt.model.field.UtilityField
 
 object RentCalculator {
-    fun calculatePropertyRent(field: PropertyField): Int {
+
+    /**
+     * Calculate rent for a property field.
+     * If the owner has a monopoly (owns all properties of this color group) and the
+     * property is unimproved (0 houses, no hotel), rent is doubled per official rules.
+     */
+    fun calculatePropertyRent(field: PropertyField, allFields: List<Field>, ownerId: String): Int {
         return if (field.hasHotel) {
             // Hotel rent is at index 5
             field.rent[5]
         } else {
-            // Use number of houses, capped at 4
             val index = field.houses.coerceAtMost(4)
-            field.rent[index]
+            val baseRent = field.rent[index]
+            //  double rent on unimproved properties in a monopoly
+            if (field.houses == 0 && !field.hasHotel && isMonopoly(field, allFields, ownerId)) {
+                baseRent * 2
+            } else {
+                baseRent
+            }
         }
+    }
+
+    /**
+     * Returns true if [ownerId] owns every PropertyField in [field]'s color group.
+     */
+    private fun isMonopoly(field: PropertyField, allFields: List<Field>, ownerId: String): Boolean {
+        val colorGroupProperties = allFields.filterIsInstance<PropertyField>()
+            .filter { it.color == field.color }
+        return colorGroupProperties.isNotEmpty() && colorGroupProperties.all { it.ownerId == ownerId }
     }
 
     fun calculateRailroadRent(field: RailroadField, allFields: List<Field>, ownerId: String): Int {
