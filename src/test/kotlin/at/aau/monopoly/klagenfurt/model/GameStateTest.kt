@@ -198,4 +198,26 @@ class GameStateTest {
         assertEquals("Alice", gameState.currentPlayer?.name)
         assertEquals(GamePhase.TURN_END, gameState.phase)
     }
+
+    @Test
+    fun `advanceTurn should return early when all players are bankrupt`() {
+        val players = mutableListOf(
+            Player(id = "1", name = "Alice", money = 0),
+            Player(id = "2", name = "Bob", money = 0)
+        )
+
+        val gameState = GameState(
+            gameId = "game-1",
+            fields = BoardFactory.createDefaultBoard(),
+            players = players,
+            currentPlayerIndex = 0,
+            phase = GamePhase.BUYING
+        )
+
+        gameState.advanceTurn()
+
+        // Phase and index should remain unchanged since all players are bankrupt
+        assertEquals(0, gameState.currentPlayerIndex)
+        assertEquals(GamePhase.BUYING, gameState.phase)
+    }
 }

@@ -16,6 +16,7 @@ import at.aau.monopoly.klagenfurt.model.field.OwnableField
 import at.aau.monopoly.klagenfurt.model.field.PropertyField
 import at.aau.monopoly.klagenfurt.model.field.RailroadField
 import at.aau.monopoly.klagenfurt.model.field.TaxField
+import at.aau.monopoly.klagenfurt.model.field.Field
 import at.aau.monopoly.klagenfurt.model.field.UtilityField
 import at.aau.monopoly.klagenfurt.service.PaymentService
 import at.aau.monopoly.klagenfurt.service.RentCalculator
@@ -198,7 +199,6 @@ class WebSocketBrokerController(
                 var eventMessage = "${player.name} rolled ${roll.die1} + ${roll.die2} = ${roll.total}."
 
                 if (player.inJail) {
-                    println("in Jail")
                     if (roll.isDouble) {
                         player.inJail = false
                         player.jailTurns = 0
@@ -236,7 +236,7 @@ class WebSocketBrokerController(
                             player.jailTurns = 0
                             player.consecutiveDoublets = 0
                             eventMessage += " Rolled 3 doublets! Go to Jail!"
-                            gameState.phase = GamePhase.BUYING
+                            gameState.phase = GamePhase.TURN_END
 
                         } else {
                             eventMessage += " Rolled a doublet! Gets another turn."
@@ -720,15 +720,16 @@ class WebSocketBrokerController(
             "PAY_RENT" -> {
                 val player = gameState.currentPlayer ?: return
                 val fieldId = action.payload["fieldId"]?.toIntOrNull()
-                // validate fieldId matches pending rent field
-                if (fieldId == null || fieldId != gameState.pendingRentFieldId) {
+                // validate fieldId matches pending rent or tax field
+                val expectedFieldId = gameState.pendingRentFieldId ?: gameState.pendingTaxFieldId
+                if (fieldId == null || fieldId != expectedFieldId) {
                     messagingTemplate.convertAndSend(
                         "/topic/game/${action.gameId}",
                         GameEvent(
                             gameId = action.gameId,
                             event = "ERROR",
                             gameState = gameState,
-                            message = "Invalid fieldId for rent payment. Expected: ${gameState.pendingRentFieldId}, got: $fieldId"
+                            message = "Invalid fieldId for rent payment. Expected: $expectedFieldId, got: $fieldId"
                         )
                     )
                     return
@@ -784,11 +785,13 @@ class WebSocketBrokerController(
                             return
                         }
                         player.money -= taxAmount
+                        // Tax money goes to the Free Parking pool (standard Monopoly house rule)
+                        gameState.freeParkingMoney += taxAmount
                     }
                     gameState.phase = GamePhase.TURN_END
                     gameState.pendingTaxAmount = 0
                     gameState.pendingTaxFieldId = null
-                    val event = GameEvent(gameId = action.gameId, event = GameEvent.RENT_PAID, gameState = gameState)
+                    val event = GameEvent(gameId = action.gameId, event = GameEvent.TAX_PAID, gameState = gameState)
                     messagingTemplate.convertAndSend("/topic/game/${action.gameId}", event)
                 }
             }
@@ -861,6 +864,7 @@ class WebSocketBrokerController(
                 // Compute bankruptcy summary BEFORE processing
                 val ownedFields = gameState.fields.filterIsInstance<OwnableField>()
                     .filter { it.ownerId == player.id }
+                val ownedFieldIds = ownedFields.map { (it as Field).id }
                 val totalAssetValue = player.money + ownedFields.sumOf { f ->
                     val price = when (f) {
                         is PropertyField -> f.price
@@ -925,6 +929,7 @@ class WebSocketBrokerController(
                 gameState.bankruptcyTotalAssets = totalAssetValue
                 gameState.bankruptcyTotalDebt = totalDebt
                 gameState.bankruptcyPropertiesCount = propertiesCount
+                gameState.bankruptcyOwnedFieldIds = ownedFieldIds
                 val event = GameEvent(gameId = action.gameId, event = GameEvent.BANKRUPTCY_DECLARED, gameState = gameState)
                 messagingTemplate.convertAndSend("/topic/game/${action.gameId}", event)
             }

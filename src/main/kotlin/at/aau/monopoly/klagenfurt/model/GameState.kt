@@ -26,7 +26,8 @@ data class GameState(
     var pendingTaxFieldId: Int? = null,
     var bankruptcyTotalAssets: Int = 0,
     var bankruptcyTotalDebt: Int = 0,
-    var bankruptcyPropertiesCount: Int = 0
+    var bankruptcyPropertiesCount: Int = 0,
+    var bankruptcyOwnedFieldIds: List<Int> = emptyList()
 ) {
     /** The player whose turn it currently is. */
     val currentPlayer: Player?
@@ -35,7 +36,16 @@ data class GameState(
     /** Advance the turn to the next player (wraps around). */
     fun advanceTurn() {
         if (players.isNotEmpty()) {
-            currentPlayerIndex = (currentPlayerIndex + 1) % players.size
+            var attempts = 0
+            do {
+                currentPlayerIndex = (currentPlayerIndex + 1) % players.size
+                attempts++
+            } while (attempts < players.size && players[currentPlayerIndex].isBankrupt())
+
+            if (players[currentPlayerIndex].isBankrupt()) {
+                // All players are bankrupt; do not advance phase
+                return
+            }
         }
         phase = GamePhase.ROLLING
         currentActionCard = null
@@ -45,9 +55,6 @@ data class GameState(
         pendingRentFieldId = null
         pendingTaxAmount = 0
         pendingTaxFieldId = null
-        bankruptcyTotalAssets = 0
-        bankruptcyTotalDebt = 0
-        bankruptcyPropertiesCount = 0
     }
 
     /** End the current player's turn without advancing to the next player yet.

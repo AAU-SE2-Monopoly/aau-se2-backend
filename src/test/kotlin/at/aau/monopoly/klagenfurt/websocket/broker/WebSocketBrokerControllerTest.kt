@@ -184,7 +184,10 @@ class WebSocketBrokerControllerTest {
 
         controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "ROLL_DICE",payload = mutableMapOf("cheat" to "false")))
 
-        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+        // Use atLeast(1) because ROLL_DICE may also send TAX_DUE/RENT_DUE/FREE_PARKING_COLLECTED
+        // depending on where the random dice land
+        val messages = captureLastMessages(messagingTemplate, 1)
+        val event = messages.first { (it.second as GameEvent).event == "DICE_ROLLED" }.second as GameEvent
 
         assertEquals("DICE_ROLLED", event.event)
         assertEquals(GamePhase.BUYING, gameState.phase)
@@ -1522,7 +1525,7 @@ class WebSocketBrokerControllerTest {
         assertEquals(true, player.inJail)
         assertEquals(10, player.position)
         assertEquals(0, player.consecutiveDoublets)
-        assertEquals(GamePhase.BUYING, gameState.phase)
+        assertEquals(GamePhase.TURN_END, gameState.phase)
     }
 
     @Test
