@@ -271,14 +271,11 @@ class WebSocketBrokerController(
                     }
                 }
 
-                messagingTemplate.convertAndSend(
-                    "/topic/game/${action.gameId}",
-                    GameEvent(
-                        gameId = action.gameId,
-                        event = "DICE_ROLLED",
-                        gameState = gameState,
-                        message = eventMessage
-                    )
+                sendGameEvent(
+                    action,
+                    gameState,
+                    "DICE_ROLLED",
+                    eventMessage
                 )
             }
 
@@ -345,27 +342,21 @@ class WebSocketBrokerController(
                 if (player != null && isDoublet && !player.inJail && player.consecutiveDoublets > 0) {
                     gameState.endCurrentTurn()
                     gameState.phase = GamePhase.ROLLING
-                    messagingTemplate.convertAndSend(
-                        "/topic/game/${action.gameId}",
-                        GameEvent(
-                            gameId = action.gameId,
-                            event = "TURN_ENDED",
-                            gameState = gameState,
-                            message = "${player.name} rolled a doublet and gets another turn!"
-                        )
+                    sendGameEvent(
+                        action,
+                        gameState,
+                        "TURN_ENDED",
+                        "${player.name} rolled a doublet and gets another turn!"
                     )
                 } else {
                     if (player != null) player.consecutiveDoublets = 0 // Reset just in case
                     gameState.endCurrentTurn()
                     gameState.advanceTurn()
-                    messagingTemplate.convertAndSend(
-                        "/topic/game/${action.gameId}",
-                        GameEvent(
-                            gameId = action.gameId,
-                            event = "TURN_ENDED",
-                            gameState = gameState,
-                            message = "Next turn: ${gameState.currentPlayer?.name}."
-                        )
+                    sendGameEvent(
+                        action,
+                        gameState,
+                        "TURN_ENDED",
+                        "Next turn: ${gameState.currentPlayer?.name}."
                     )
                 }
             }
@@ -452,14 +443,11 @@ class WebSocketBrokerController(
 
                 gameState.currentActionCard = card
                 gameState.hasDrawnCardThisTurn = true
-                messagingTemplate.convertAndSend(
-                    "/topic/game/${action.gameId}",
-                    GameEvent(
-                        gameId = action.gameId,
-                        event = "ACTION_DRAWN",
-                        gameState = gameState,
-                        message = "Card drawn: ${card.description}"
-                    )
+                sendGameEvent(
+                    action,
+                    gameState,
+                    "ACTION_DRAWN",
+                    "Card drawn: ${card.description}"
                 )
             }
 
@@ -494,14 +482,11 @@ class WebSocketBrokerController(
                 executeCardAction(gameState, card, action.playerId)
                 gameState.currentActionCard = null
 
-                messagingTemplate.convertAndSend(
-                    "/topic/game/${action.gameId}",
-                    GameEvent(
-                        gameId = action.gameId,
-                        event = "ACTION_EXECUTED",
-                        gameState = gameState,
-                        message = "Action executed: ${card.description}"
-                    )
+                sendGameEvent(
+                    action,
+                    gameState,
+                    "ACTION_EXECUTED",
+                    "Action executed: ${card.description}"
                 )
             }
 
@@ -638,14 +623,11 @@ class WebSocketBrokerController(
 
                 player.ownedPropertyIds.add(fieldId)
 
-                messagingTemplate.convertAndSend(
-                    "/topic/game/${action.gameId}",
-                    GameEvent(
-                        gameId = action.gameId,
-                        event = "PROPERTY_BOUGHT",
-                        gameState = gameState,
-                        message = "${player.name} bought ${field.name} for $$price."
-                    )
+                sendGameEvent(
+                    action,
+                    gameState,
+                    "PROPERTY_BOUGHT",
+                    "${player.name} bought ${field.name} for $$price."
                 )
             }
 
