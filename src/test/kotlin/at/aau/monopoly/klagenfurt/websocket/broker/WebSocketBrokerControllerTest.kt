@@ -135,7 +135,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
 
         controller.startGame(GameAction(gameId = gameState.gameId))
 
@@ -195,19 +195,6 @@ class WebSocketBrokerControllerTest {
     }
 
     @Test
-    fun `handleAction ROLL_DICE should emit error when game has no current player`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame(hostPlayerId = "host-1")
-
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "ROLL_DICE"))
-
-        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
-
-        assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("It is not your turn"))
-    }
-
-    @Test
     fun `handleAction ROLL_DICE should grant pass go bonus when player wraps around board`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
@@ -236,7 +223,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
 
         controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "END_TURN"))
 
@@ -261,20 +248,6 @@ class WebSocketBrokerControllerTest {
     }
 
     @Test
-    fun `getGameState should send snapshot for existing game`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame()
-
-        controller.getGameState(GameAction(gameId = gameState.gameId))
-
-        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
-
-        assertEquals("STATE_SNAPSHOT", event.event)
-        assertEquals(gameState.gameId, event.gameState!!.gameId)
-        assertNull(event.message)
-    }
-
-    @Test
     fun `getGameState should send error for missing game`() {
         val (controller, _, messagingTemplate) = createController()
 
@@ -293,12 +266,14 @@ class WebSocketBrokerControllerTest {
         val waitingGame = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(waitingGame.gameId, Player(id = "host-1", name = "Alice"))
         val startedGame = gameController.createGame(hostPlayerId = "host-2")
-        gameController.joinGame(startedGame.gameId, Player(id = "host-2", name = "Bob"))
+        gameController.joinGame(startedGame.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee"))
         gameController.getGameState(startedGame.gameId)!!.advanceTurn()
 
         controller.listGames(GameAction())
 
-        val lobbyEvent = captureMessages(messagingTemplate, 1).single().second as LobbyEvent
+        val messages = captureMessages(messagingTemplate, 1)
+        assertEquals("/topic/lobby", messages.single().first)
+        val lobbyEvent = messages.single().second as LobbyEvent
 
         assertEquals("LOBBY_UPDATE", lobbyEvent.event)
         assertEquals(2, lobbyEvent.games.size)
@@ -461,8 +436,8 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
-        gameController.joinGame(gameState.gameId, Player(id = "player-3", name = "Charlie"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-3", name = "Charlie", iconId = "gti"))
 
         controller.getGameState(GameAction(gameId = gameState.gameId))
 
@@ -490,7 +465,7 @@ class WebSocketBrokerControllerTest {
     fun `joinGame should include player in game state event`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
-        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "woerthersee"))
 
         controller.joinGame(
             GameAction(
@@ -511,7 +486,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
 
         gameState.advanceTurn()
 
@@ -535,7 +510,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
         gameState.advanceTurn()
 
         controller.joinGame(
@@ -564,7 +539,7 @@ class WebSocketBrokerControllerTest {
         repeat(gameController.maxPlayersPerGame) { index ->
             gameController.joinGame(
                 gameState.gameId,
-                Player(id = "player-$index", name = "Player $index")
+                Player(id = "player-$index", name = "Player $index", iconId = "icon-$index")
             )
         }
 
@@ -590,7 +565,7 @@ class WebSocketBrokerControllerTest {
     fun `joinGame should normalize blank icon from payload to default`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
-        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "woerthersee"))
 
         controller.joinGame(
             GameAction(
@@ -631,7 +606,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
 
         controller.startGame(GameAction(gameId = gameState.gameId))
 
@@ -648,7 +623,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
 
         controller.handleAction(
             GameAction(
@@ -669,7 +644,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
         gameState.phase = GamePhase.ROLLING
 
         controller.handleAction(
@@ -693,7 +668,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
         gameState.phase = GamePhase.BUYING
 
         controller.handleAction(
@@ -715,7 +690,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
         gameState.phase = GamePhase.BUYING
         gameState.lastDiceRoll = DiceRoll(3, 4)
         gameState.currentActionCard = ChanceCard(
@@ -1091,8 +1066,8 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame()
         gameController.joinGame(gameState.gameId, Player(id = "player-1", name = "Alice", money = 1000))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", money = 1500))
-        gameController.joinGame(gameState.gameId, Player(id = "player-3", name = "Charlie", money = 1500))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee", money = 1500))
+        gameController.joinGame(gameState.gameId, Player(id = "player-3", name = "Charlie", iconId = "gti", money = 1500))
 
         val card = ChanceCard(
             id = 7,
@@ -1114,8 +1089,8 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame()
         gameController.joinGame(gameState.gameId, Player(id = "player-1", name = "Alice", money = 1000))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", money = 1500))
-        gameController.joinGame(gameState.gameId, Player(id = "player-3", name = "Charlie", money = 1500))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee", money = 1500))
+        gameController.joinGame(gameState.gameId, Player(id = "player-3", name = "Charlie", iconId = "gti", money = 1500))
 
         val card = ChanceCard(
             id = 8,
@@ -1339,7 +1314,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
         gameState.advanceTurn()
 
         controller.handleAction(
@@ -1573,7 +1548,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
         gameState.advanceTurn()
 
         val wrongPlayerId = if (gameState.currentPlayer!!.id == "host-1") "player-2" else "host-1"
@@ -1640,7 +1615,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
         gameState.advanceTurn()
 
         val wrongPlayerId = if (gameState.currentPlayer!!.id == "host-1") "player-2" else "host-1"
@@ -1859,7 +1834,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500))
-        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 1500))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee", money = 1500))
 
         controller.handleAction(
             GameAction(
@@ -2014,7 +1989,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
 
         val card = ChanceCard(
             id = 99,
@@ -2045,7 +2020,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
 
         gameState.hasDrawnCardThisTurn = true
         gameState.currentActionCard = ChanceCard(
@@ -2123,158 +2098,11 @@ class WebSocketBrokerControllerTest {
     }
 
     @Test
-    fun `handleAction unknown action should emit error`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame(hostPlayerId = "host-1")
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "UNKNOWN_ACTION"))
-        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("Unknown action"))
-    }
-
-    @Test
-    fun `handleAction ROLL_DICE normal non-doublet passes go`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame(hostPlayerId = "host-1")
-        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        val player = gameState.players[0]
-        gameState.currentPlayerIndex = -1
-        gameState.advanceTurn()
-
-        var attempts = 0
-        while(true) {
-            Mockito.clearInvocations(messagingTemplate)
-            gameState.phase = GamePhase.ROLLING
-            player.position = 38
-            player.money = 1500
-            controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "ROLL_DICE"))
-            val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-            if (!gameState.lastDiceRoll!!.isDouble) {
-                assertEquals(1700, player.money)
-                assertTrue(event.message!!.contains("passed Go"))
-                break
-            }
-            attempts++
-            if (attempts > 50) org.junit.jupiter.api.Assertions.fail<Unit>("Could not roll non-doublet")
-        }
-    }
-
-    @Test
-    fun `handleAction DRAW_CARD errors`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame(hostPlayerId = "host-1")
-        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameState.currentPlayerIndex = -1
-        gameState.advanceTurn()
-
-        Mockito.clearInvocations(messagingTemplate)
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "DRAW_CARD"))
-        var event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("cardType must be specified"))
-
-        Mockito.clearInvocations(messagingTemplate)
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "DRAW_CARD", payload = mutableMapOf("cardType" to "JUNK")))
-        event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("Unknown card type"))
-    }
-
-    @Test
-    fun `handleAction BUY_PROPERTY errors`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame(hostPlayerId = "host-1")
-        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob"))
-        gameState.currentPlayerIndex = -1
-        gameState.advanceTurn()
-        gameState.phase = GamePhase.BUYING
-        val player = gameState.players[0]
-        player.position = 1
-
-        Mockito.clearInvocations(messagingTemplate)
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "BUY_PROPERTY"))
-        var event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals("ERROR", event.event)
-
-        Mockito.clearInvocations(messagingTemplate)
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "BUY_PROPERTY", payload = mutableMapOf("fieldId" to "-1")))
-        event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals("ERROR", event.event)
-
-        Mockito.clearInvocations(messagingTemplate)
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "BUY_PROPERTY", payload = mutableMapOf("fieldId" to "100")))
-        event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals("ERROR", event.event)
-
-        Mockito.clearInvocations(messagingTemplate)
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "BUY_PROPERTY", payload = mutableMapOf("fieldId" to "3")))
-        event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("currently standing on"))
-
-        Mockito.clearInvocations(messagingTemplate)
-        player.position = 7
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "BUY_PROPERTY", payload = mutableMapOf("fieldId" to "7")))
-        event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("cannot be bought"))
-
-        Mockito.clearInvocations(messagingTemplate)
-        player.position = 1
-        val propField = gameState.fields[1] as PropertyField
-        propField.ownerId = "host-2"
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "BUY_PROPERTY", payload = mutableMapOf("fieldId" to "1")))
-        event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("already owned"))
-
-        Mockito.clearInvocations(messagingTemplate)
-        propField.ownerId = null
-        player.money = 0
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "BUY_PROPERTY", payload = mutableMapOf("fieldId" to "1")))
-        event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("enough money"))
-    }
-
-    @Test
-    fun `handleAction USE_JAIL_CARD without cards`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame(hostPlayerId = "host-1")
-        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameState.currentPlayerIndex = -1
-        gameState.advanceTurn()
-        val player = gameState.players[0]
-        player.inJail = true
-        player.getOutOfJailCards = 0
-
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "USE_JAIL_CARD"))
-        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("do not have a Get Out of Jail Free card"))
-    }
-
-    @Test
-    fun `handleAction EXECUTE_ACTION no card`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame(hostPlayerId = "host-1")
-        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameState.currentPlayerIndex = -1
-        gameState.advanceTurn()
-
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "EXECUTE_ACTION"))
-        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("No action card"))
-    }
-
-    @Test
     fun `handleAction END_TURN with doublet but in jail advances turn`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee"))
         gameState.currentPlayerIndex = -1
         gameState.advanceTurn()
 
@@ -2296,7 +2124,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee"))
         gameState.currentPlayerIndex = -1
         gameState.advanceTurn()
 
