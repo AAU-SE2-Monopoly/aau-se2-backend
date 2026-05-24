@@ -20,6 +20,7 @@ import org.springframework.messaging.handler.annotation.MessageMapping
 import org.springframework.messaging.simp.SimpMessagingTemplate
 import org.springframework.stereotype.Controller
 import org.springframework.web.socket.messaging.SessionDisconnectEvent
+import at.aau.monopoly.klagenfurt.model.GameState
 
 
 @Controller
@@ -398,7 +399,7 @@ class WebSocketBrokerController(
                     return
                 }
 
-                val cardType = action.payload["cardType"] as? String
+                val cardType = action.payload["cardType"]
                 if (cardType == null) {
                     messagingTemplate.convertAndSend(
                         "/topic/game/${action.gameId}",
@@ -768,7 +769,7 @@ class WebSocketBrokerController(
     /**
      * Draw a Chance card from the deck. If the deck is empty, shuffle all cards back.
      */
-    private fun drawChanceCard(gameState: at.aau.monopoly.klagenfurt.model.GameState): Card {
+    private fun drawChanceCard(gameState: GameState): Card {
         if (gameState.chanceCards.isEmpty()) {
             gameState.chanceCards.addAll(
                 at.aau.monopoly.klagenfurt.model.BoardFactory.createChanceCards()
@@ -780,7 +781,7 @@ class WebSocketBrokerController(
     /**
      * Draw a Community Chest card from the deck. If the deck is empty, shuffle all cards back.
      */
-    private fun drawCommunityChestCard(gameState: at.aau.monopoly.klagenfurt.model.GameState): Card {
+    private fun drawCommunityChestCard(gameState: GameState): Card {
         if (gameState.communityChestCards.isEmpty()) {
             gameState.communityChestCards.addAll(
                 at.aau.monopoly.klagenfurt.model.BoardFactory.createCommunityChestCards()
@@ -793,7 +794,7 @@ class WebSocketBrokerController(
      * Execute a card action: transfer money, move player, etc.
      */
     private fun executeCardAction(
-        gameState: at.aau.monopoly.klagenfurt.model.GameState,
+        gameState: GameState,
         card: Card,
         playerId: String
     ) {
@@ -865,7 +866,7 @@ class WebSocketBrokerController(
 
     private fun handleBuyHouse(
         action: GameAction,
-        gameState: at.aau.monopoly.klagenfurt.model.GameState
+        gameState: GameState
     ) {
         val player = gameState.currentPlayer
 
@@ -924,20 +925,17 @@ class WebSocketBrokerController(
         player.money -= property.houseCost
         property.houses += 1
 
-        messagingTemplate.convertAndSend(
-            "/topic/game/${action.gameId}",
-            GameEvent(
-                gameId = action.gameId,
-                event = "HOUSE_BOUGHT",
-                gameState = gameState,
-                message = "${player.name} bought a house on ${property.name}."
-            )
+        sendGameEvent(
+            action,
+            gameState,
+            "HOUSE_BOUGHT",
+            "${player.name} bought a house on ${property.name}."
         )
     }
 
     private fun handleBuyHotel(
         action: GameAction,
-        gameState: at.aau.monopoly.klagenfurt.model.GameState
+        gameState: GameState
     ) {
         val player = gameState.currentPlayer
 
@@ -987,20 +985,17 @@ class WebSocketBrokerController(
         property.houses = 0
         property.hasHotel = true
 
-        messagingTemplate.convertAndSend(
-            "/topic/game/${action.gameId}",
-            GameEvent(
-                gameId = action.gameId,
-                event = "HOTEL_BOUGHT",
-                gameState = gameState,
-                message = "${player.name} bought a hotel on ${property.name}."
-            )
+        sendGameEvent(
+            action,
+            gameState,
+            "HOTEL_BOUGHT",
+            "${player.name} bought a hotel on ${property.name}."
         )
     }
 
     private fun handleSellHouse(
         action: GameAction,
-        gameState: at.aau.monopoly.klagenfurt.model.GameState
+        gameState: GameState
     ) {
         val player = gameState.currentPlayer
 
@@ -1044,20 +1039,17 @@ class WebSocketBrokerController(
         property.houses -= 1
         player.money += property.houseCost / 2
 
-        messagingTemplate.convertAndSend(
-            "/topic/game/${action.gameId}",
-            GameEvent(
-                gameId = action.gameId,
-                event = "HOUSE_SOLD",
-                gameState = gameState,
-                message = "${player.name} sold a house on ${property.name}."
-            )
+        sendGameEvent(
+            action,
+            gameState,
+            "HOUSE_SOLD",
+            "${player.name} sold a house on ${property.name}."
         )
     }
 
     private fun handleSellHotel(
         action: GameAction,
-        gameState: at.aau.monopoly.klagenfurt.model.GameState
+        gameState: GameState
     ) {
         val player = gameState.currentPlayer
 
@@ -1092,19 +1084,16 @@ class WebSocketBrokerController(
         property.houses = 4
         player.money += property.hotelCost / 2
 
-        messagingTemplate.convertAndSend(
-            "/topic/game/${action.gameId}",
-            GameEvent(
-                gameId = action.gameId,
-                event = "HOTEL_SOLD",
-                gameState = gameState,
-                message = "${player.name} sold a hotel on ${property.name}."
-            )
+        sendGameEvent(
+            action,
+            gameState,
+            "HOTEL_SOLD",
+            "${player.name} sold a hotel on ${property.name}."
         )
     }
 
     private fun canSellHouseEvenly(
-        gameState: at.aau.monopoly.klagenfurt.model.GameState,
+        gameState: GameState,
         property: PropertyField
     ): Boolean {
         val colorSet = gameState.fields
@@ -1117,7 +1106,7 @@ class WebSocketBrokerController(
     }
 
     private fun ownsCompleteColorSet(
-        gameState: at.aau.monopoly.klagenfurt.model.GameState,
+        gameState: GameState,
         playerId: String,
         property: PropertyField
     ): Boolean {
@@ -1129,7 +1118,7 @@ class WebSocketBrokerController(
     }
 
     private fun canBuildHouseEvenly(
-        gameState: at.aau.monopoly.klagenfurt.model.GameState,
+        gameState: GameState,
         property: PropertyField
     ): Boolean {
         val colorSet = gameState.fields
@@ -1143,7 +1132,7 @@ class WebSocketBrokerController(
 
     private fun sendGameError(
         action: GameAction,
-        gameState: at.aau.monopoly.klagenfurt.model.GameState,
+        gameState: GameState,
         message: String
     ) {
         messagingTemplate.convertAndSend(
@@ -1151,6 +1140,23 @@ class WebSocketBrokerController(
             GameEvent(
                 gameId = action.gameId,
                 event = "ERROR",
+                gameState = gameState,
+                message = message
+            )
+        )
+    }
+
+    private fun sendGameEvent(
+        action: GameAction,
+        gameState: GameState,
+        event: String,
+        message: String
+    ) {
+        messagingTemplate.convertAndSend(
+            "/topic/game/${action.gameId}",
+            GameEvent(
+                gameId = action.gameId,
+                event = event,
                 gameState = gameState,
                 message = message
             )
