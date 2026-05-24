@@ -26,7 +26,9 @@ import org.springframework.web.socket.messaging.SessionDisconnectEvent
 class WebSocketBrokerController(
     private val messagingTemplate: SimpMessagingTemplate,
     private val gameController: GameController
+
 ) {
+
 
     private fun normalizeIconId(iconId: String?): String =
         iconId?.takeIf { it.isNotBlank() } ?: "lindwurm"
@@ -760,6 +762,7 @@ class WebSocketBrokerController(
 
     companion object {
         private val logger = LoggerFactory.getLogger(WebSocketBrokerController::class.java)
+        private const val INVALID_FIELD_ID_MESSAGE = "Invalid fieldId."
     }
 
     /**
@@ -878,7 +881,7 @@ class WebSocketBrokerController(
 
         val fieldId = action.payload["fieldId"]?.toIntOrNull()
         if (fieldId == null || fieldId !in gameState.fields.indices) {
-            sendGameError(action, gameState, "Invalid fieldId.")
+            sendGameError(action, gameState, INVALID_FIELD_ID_MESSAGE)
             return
         }
 
@@ -945,7 +948,7 @@ class WebSocketBrokerController(
 
         val fieldId = action.payload["fieldId"]?.toIntOrNull()
         if (fieldId == null || fieldId !in gameState.fields.indices) {
-            sendGameError(action, gameState, "Invalid fieldId.")
+            sendGameError(action, gameState, INVALID_FIELD_ID_MESSAGE)
             return
         }
 
@@ -1008,7 +1011,7 @@ class WebSocketBrokerController(
 
         val fieldId = action.payload["fieldId"]?.toIntOrNull()
         if (fieldId == null || fieldId !in gameState.fields.indices) {
-            sendGameError(action, gameState, "Invalid fieldId.")
+            sendGameError(action, gameState, INVALID_FIELD_ID_MESSAGE)
             return
         }
 
@@ -1065,7 +1068,7 @@ class WebSocketBrokerController(
 
         val fieldId = action.payload["fieldId"]?.toIntOrNull()
         if (fieldId == null || fieldId !in gameState.fields.indices) {
-            sendGameError(action, gameState, "Invalid fieldId.")
+            sendGameError(action, gameState, INVALID_FIELD_ID_MESSAGE)
             return
         }
 

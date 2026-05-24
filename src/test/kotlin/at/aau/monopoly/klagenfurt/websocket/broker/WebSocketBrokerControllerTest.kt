@@ -2561,4 +2561,72 @@ class WebSocketBrokerControllerTest {
         assertEquals(4, property.houses)
     }
 
+    @Test
+    fun `buyHouse should fail with invalid field id`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.phase = GamePhase.BUYING
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "BUY_HOUSE",
+                payload = mutableMapOf("fieldId" to "999")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("Invalid fieldId"))
+    }
+
+    @Test
+    fun `buyHouse should fail when property is not owned by player`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.phase = GamePhase.BUYING
+
+        val property = gameState.fields[1] as PropertyField
+        property.ownerId = "other-player"
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "BUY_HOUSE",
+                payload = mutableMapOf("fieldId" to property.id.toString())
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("own properties"))
+    }
+    @Test
+    fun `sellHotel should fail when property has no hotel`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+
+        val player = gameState.currentPlayer!!
+        val property = gameState.fields[1] as PropertyField
+        property.ownerId = player.id
+        property.hasHotel = false
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = player.id,
+                action = "SELL_HOTEL",
+                payload = mutableMapOf("fieldId" to property.id.toString())
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("no hotel"))
+    }
 }
