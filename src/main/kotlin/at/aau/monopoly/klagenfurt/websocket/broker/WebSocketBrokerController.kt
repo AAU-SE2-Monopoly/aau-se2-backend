@@ -146,10 +146,7 @@ class WebSocketBrokerController(
             "ROLL_DICE" -> handleRollDice(action, gameState)
 
             "PAY_JAIL_FINE" -> {
-                if (gameState.currentPlayer?.id != action.playerId) {
-                    messagingTemplate.convertAndSend("/topic/game/${action.gameId}", GameEvent(gameId = action.gameId, event = "ERROR", message = "It is not your turn."))
-                    return
-                }
+                if (!validateCurrentPlayerTurn(action, gameState)) return
                 val player = gameState.currentPlayer!!
                 if (!player.inJail) {
                     messagingTemplate.convertAndSend("/topic/game/${action.gameId}", GameEvent(gameId = action.gameId, event = "ERROR", message = "You are not in jail."))
@@ -324,6 +321,7 @@ class WebSocketBrokerController(
     companion object {
         private val logger = LoggerFactory.getLogger(WebSocketBrokerController::class.java)
         private const val INVALID_FIELD_ID_MESSAGE = "Invalid fieldId."
+        private const val NOT_YOUR_TURN_MESSAGE = "It is not your turn."
     }
 
     /**
@@ -428,27 +426,11 @@ class WebSocketBrokerController(
         action: GameAction,
         gameState: GameState
     ) {
-        val player = gameState.currentPlayer
-
-        if (player?.id != action.playerId) {
-            sendGameError(action, gameState, "It is not your turn.")
-            return
-        }
+        val property = getValidatedProperty(action, gameState) ?: return
+        val player = gameState.currentPlayer!!
 
         if (gameState.phase != GamePhase.BUYING && gameState.phase != GamePhase.TURN_END) {
             sendGameError(action, gameState, "Houses can only be bought during your turn.")
-            return
-        }
-
-        val fieldId = action.payload["fieldId"]?.toIntOrNull()
-        if (fieldId == null || fieldId !in gameState.fields.indices) {
-            sendGameError(action, gameState, INVALID_FIELD_ID_MESSAGE)
-            return
-        }
-
-        val property = gameState.fields[fieldId] as? PropertyField
-        if (property == null) {
-            sendGameError(action, gameState, "Only properties can have houses.")
             return
         }
 
@@ -497,24 +479,8 @@ class WebSocketBrokerController(
         action: GameAction,
         gameState: GameState
     ) {
-        val player = gameState.currentPlayer
-
-        if (player?.id != action.playerId) {
-            sendGameError(action, gameState, "It is not your turn.")
-            return
-        }
-
-        val fieldId = action.payload["fieldId"]?.toIntOrNull()
-        if (fieldId == null || fieldId !in gameState.fields.indices) {
-            sendGameError(action, gameState, INVALID_FIELD_ID_MESSAGE)
-            return
-        }
-
-        val property = gameState.fields[fieldId] as? PropertyField
-        if (property == null) {
-            sendGameError(action, gameState, "Only properties can have hotels.")
-            return
-        }
+        val property = getValidatedProperty(action, gameState) ?: return
+        val player = gameState.currentPlayer!!
 
         if (property.ownerId != player.id) {
             sendGameError(action, gameState, "You can only build on your own properties.")
@@ -557,24 +523,8 @@ class WebSocketBrokerController(
         action: GameAction,
         gameState: GameState
     ) {
-        val player = gameState.currentPlayer
-
-        if (player?.id != action.playerId) {
-            sendGameError(action, gameState, "It is not your turn.")
-            return
-        }
-
-        val fieldId = action.payload["fieldId"]?.toIntOrNull()
-        if (fieldId == null || fieldId !in gameState.fields.indices) {
-            sendGameError(action, gameState, INVALID_FIELD_ID_MESSAGE)
-            return
-        }
-
-        val property = gameState.fields[fieldId] as? PropertyField
-        if (property == null) {
-            sendGameError(action, gameState, "Only properties can have houses.")
-            return
-        }
+        val property = getValidatedProperty(action, gameState) ?: return
+        val player = gameState.currentPlayer!!
 
         if (property.ownerId != player.id) {
             sendGameError(action, gameState, "You can only sell houses from your own properties.")
@@ -611,24 +561,8 @@ class WebSocketBrokerController(
         action: GameAction,
         gameState: GameState
     ) {
-        val player = gameState.currentPlayer
-
-        if (player?.id != action.playerId) {
-            sendGameError(action, gameState, "It is not your turn.")
-            return
-        }
-
-        val fieldId = action.payload["fieldId"]?.toIntOrNull()
-        if (fieldId == null || fieldId !in gameState.fields.indices) {
-            sendGameError(action, gameState, INVALID_FIELD_ID_MESSAGE)
-            return
-        }
-
-        val property = gameState.fields[fieldId] as? PropertyField
-        if (property == null) {
-            sendGameError(action, gameState, "Only properties can have hotels.")
-            return
-        }
+        val property = getValidatedProperty(action, gameState) ?: return
+        val player = gameState.currentPlayer!!
 
         if (property.ownerId != player.id) {
             sendGameError(action, gameState, "You can only sell hotels from your own properties.")
@@ -758,18 +692,7 @@ class WebSocketBrokerController(
         action: GameAction,
         gameState: GameState
     ) {
-        if (gameState.currentPlayer?.id != action.playerId) {
-            messagingTemplate.convertAndSend(
-                "/topic/game/${action.gameId}",
-                GameEvent(
-                    gameId = action.gameId,
-                    event = "ERROR",
-                    gameState = gameState,
-                    message = "It is not your turn."
-                )
-            )
-            return
-        }
+        if (!validateCurrentPlayerTurn(action, gameState)) return
 
         if (gameState.currentActionCard == null) {
             messagingTemplate.convertAndSend(
@@ -815,18 +738,7 @@ class WebSocketBrokerController(
             return
         }
 
-        if (gameState.currentPlayer?.id != action.playerId) {
-            messagingTemplate.convertAndSend(
-                "/topic/game/${action.gameId}",
-                GameEvent(
-                    gameId = action.gameId,
-                    event = "ERROR",
-                    gameState = gameState,
-                    message = "It is not your turn."
-                )
-            )
-            return
-        }
+        if (!validateCurrentPlayerTurn(action, gameState)) return
 
         val cardType = action.payload["cardType"]
 
@@ -896,18 +808,7 @@ class WebSocketBrokerController(
         action: GameAction,
         gameState: GameState
     ) {
-        if (gameState.currentPlayer?.id != action.playerId) {
-            messagingTemplate.convertAndSend(
-                "/topic/game/${action.gameId}",
-                GameEvent(
-                    gameId = action.gameId,
-                    event = "ERROR",
-                    gameState = gameState,
-                    message = "It is not your turn."
-                )
-            )
-            return
-        }
+        if (!validateCurrentPlayerTurn(action, gameState)) return
 
         if (gameState.phase != GamePhase.ROLLING) {
             messagingTemplate.convertAndSend(
@@ -1068,10 +969,9 @@ class WebSocketBrokerController(
         action: GameAction,
         gameState: GameState
     ) {
-        if (gameState.currentPlayer?.id != action.playerId) {
-            sendGameError(action, gameState, "It is not your turn.")
-            return
-        }
+        if (!validateCurrentPlayerTurn(action, gameState)) return
+
+
 
         if (gameState.phase != GamePhase.BUYING) {
             sendGameError(action, gameState, "Property can only be bought during the buying phase.")
@@ -1141,6 +1041,39 @@ class WebSocketBrokerController(
             "PROPERTY_BOUGHT",
             "${player.name} bought ${field.name} for $$price."
         )
+    }
+
+    private fun validateCurrentPlayerTurn(
+        action: GameAction,
+        gameState: GameState
+    ): Boolean {
+        return if (gameState.currentPlayer?.id != action.playerId) {
+            sendGameError(action, gameState, NOT_YOUR_TURN_MESSAGE)
+            false
+        } else {
+            true
+        }
+    }
+
+    private fun getValidatedProperty(
+        action: GameAction,
+        gameState: GameState
+    ): PropertyField? {
+        if (!validateCurrentPlayerTurn(action, gameState)) return null
+
+        val fieldId = action.payload["fieldId"]?.toIntOrNull()
+        if (fieldId == null || fieldId !in gameState.fields.indices) {
+            sendGameError(action, gameState, INVALID_FIELD_ID_MESSAGE)
+            return null
+        }
+
+        val property = gameState.fields[fieldId] as? PropertyField
+        if (property == null) {
+            sendGameError(action, gameState, "Only properties can have buildings.")
+            return null
+        }
+
+        return property
     }
 
 }
