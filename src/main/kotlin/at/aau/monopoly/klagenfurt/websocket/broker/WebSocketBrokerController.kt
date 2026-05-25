@@ -143,141 +143,7 @@ class WebSocketBrokerController(
             }
 
         when (action.action) {
-            "ROLL_DICE" -> {
-                if (gameState.currentPlayer?.id != action.playerId) {
-                    messagingTemplate.convertAndSend(
-                        "/topic/game/${action.gameId}",
-                        GameEvent(
-                            gameId = action.gameId,
-                            event = "ERROR",
-                            gameState = gameState,
-                            message = "It is not your turn."
-                        )
-                    )
-                    return
-                }
-
-                if (gameState.phase != GamePhase.ROLLING) {
-                    messagingTemplate.convertAndSend(
-                        "/topic/game/${action.gameId}",
-                        GameEvent(
-                            gameId = action.gameId,
-                            event = "ERROR",
-                            gameState = gameState,
-                            message = "Dice can only be rolled during the rolling phase."
-                        )
-                    )
-                    return
-                }
-
-
-                val isCheating = action.payload["cheat"] == "true"
-                val die1: Int
-                val die2: Int
-
-                if (isCheating) {
-                    die1 = 6
-                    die2 = 6
-                    println("DiceDebug: CHEAT DETECTED for player ${action.playerId}! Rolling double six.")
-                } else {
-                    die1 = (1..6).random()
-                    die2 = (1..6).random()
-                }
-
-                val roll = DiceRoll(die1, die2)
-                gameState.lastDiceRoll = roll
-                val player = gameState.currentPlayer!!
-                var eventMessage = "${player.name} rolled ${roll.die1} + ${roll.die2} = ${roll.total}."
-
-                if (player.inJail) {
-                    println("in Jail")
-                    if (roll.isDouble) {
-                        player.inJail = false
-                        player.jailTurns = 0
-                        eventMessage += " They rolled a doublet and got out of jail!"
-
-                        val oldPos = player.position
-                        val newPos = (oldPos + roll.total) % gameState.fields.size
-                        player.position = newPos
-
-                        player.consecutiveDoublets = 0
-                        gameState.phase = GamePhase.BUYING
-                    } else {
-                        player.jailTurns++
-                        if (player.jailTurns >= 3) {
-                            player.money -= 50
-                            player.inJail = false
-                            player.jailTurns = 0
-                            eventMessage += " Failed 3rd attempt. Paid 50M to get out!"
-
-                            val oldPos = player.position
-                            val newPos = (oldPos + roll.total) % gameState.fields.size
-                            player.position = newPos
-                            gameState.phase = GamePhase.BUYING
-                        } else {
-                            eventMessage += " Still in jail (turn ${player.jailTurns}/3)."
-                            gameState.phase = GamePhase.TURN_END
-                        }
-                    }
-                } else {
-                    if (roll.isDouble) {
-                        player.consecutiveDoublets++
-                        if (player.consecutiveDoublets >= 3) {
-                            player.inJail = true
-                            player.position = 10
-                            player.jailTurns = 0
-                            player.consecutiveDoublets = 0
-                            eventMessage += " Rolled 3 doublets! Go to Jail!"
-                            gameState.phase = GamePhase.BUYING
-
-                        } else {
-                            eventMessage += " Rolled a doublet! Gets another turn."
-                            val oldPos = player.position
-                            val newPos = (oldPos + roll.total) % gameState.fields.size
-                            if (newPos < oldPos) {
-                                player.money += 200
-                                eventMessage += " and passed Go (+200€)."
-                            }
-                            player.position = newPos
-                            gameState.phase = GamePhase.BUYING
-
-                            if (newPos == 30) { // Go to Jail Field
-                                player.inJail = true
-                                player.position = 10
-                                player.jailTurns = 0
-                                player.consecutiveDoublets = 0
-                                eventMessage += " Landed on Go To Jail!"
-                                gameState.phase = GamePhase.TURN_END
-                            }
-                        }
-                    } else {
-                        player.consecutiveDoublets = 0
-                        val oldPos = player.position
-                        val newPos = (oldPos + roll.total) % gameState.fields.size
-                        if (newPos < oldPos) {
-                            player.money += 200
-                            eventMessage += " and passed Go (+200€)."
-                        }
-                        player.position = newPos
-                        gameState.phase = GamePhase.BUYING
-
-                        if (newPos == 30) { // Go to Jail Field
-                            player.inJail = true
-                            player.position = 10
-                            player.jailTurns = 0
-                            eventMessage += " Landed on Go To Jail!"
-                            gameState.phase = GamePhase.TURN_END
-                        }
-                    }
-                }
-
-                sendGameEvent(
-                    action,
-                    gameState,
-                    "DICE_ROLLED",
-                    eventMessage
-                )
-            }
+            "ROLL_DICE" -> handleRollDice(action, gameState)
 
             "PAY_JAIL_FINE" -> {
                 if (gameState.currentPlayer?.id != action.playerId) {
@@ -335,301 +201,13 @@ class WebSocketBrokerController(
                 )
             }
 
-            "END_TURN" -> {
-                val player = gameState.currentPlayer
-                val isDoublet = gameState.lastDiceRoll?.isDouble == true
+            "END_TURN" -> handleEndTurn(action, gameState)
 
-                if (player != null && isDoublet && !player.inJail && player.consecutiveDoublets > 0) {
-                    gameState.endCurrentTurn()
-                    gameState.phase = GamePhase.ROLLING
-                    sendGameEvent(
-                        action,
-                        gameState,
-                        "TURN_ENDED",
-                        "${player.name} rolled a doublet and gets another turn!"
-                    )
-                } else {
-                    if (player != null) player.consecutiveDoublets = 0 // Reset just in case
-                    gameState.endCurrentTurn()
-                    gameState.advanceTurn()
-                    sendGameEvent(
-                        action,
-                        gameState,
-                        "TURN_ENDED",
-                        "Next turn: ${gameState.currentPlayer?.name}."
-                    )
-                }
-            }
+            "DRAW_CARD" -> handleDrawCard(action, gameState)
 
-            "DRAW_CARD" -> {
-                //validate if the player has already drawn a card this turn (only one card per turn allowed)
-                if (gameState.hasDrawnCardThisTurn) {
-                    messagingTemplate.convertAndSend(
-                        "/topic/game/${action.gameId}",
-                        GameEvent(
-                            gameId = action.gameId,
-                            event = "ERROR",
-                            gameState = gameState,
-                            message = "You can only draw one card per turn."
-                        )
-                    )
-                    return
-                }
+            "EXECUTE_ACTION" -> handleExecuteAction(action, gameState)
 
-                // Validate that it is the current player's turn
-                if (gameState.currentPlayer?.id != action.playerId) {
-                    messagingTemplate.convertAndSend(
-                        "/topic/game/${action.gameId}",
-                        GameEvent(
-                            gameId = action.gameId,
-                            event = "ERROR",
-                            gameState = gameState,
-                            message = "It is not your turn."
-                        )
-                    )
-                    return
-                }
-
-                val cardType = action.payload["cardType"]
-                if (cardType == null) {
-                    messagingTemplate.convertAndSend(
-                        "/topic/game/${action.gameId}",
-                        GameEvent(
-                            gameId = action.gameId,
-                            event = "ERROR",
-                            gameState = gameState,
-                            message = "cardType must be specified in payload."
-                        )
-                    )
-                    return
-                }
-
-                // Validate that the player is on the correct field type
-                val currentField = gameState.fields.getOrNull(gameState.currentPlayer?.position ?: -1)
-                val isValidFieldType = when (cardType) {
-                    "CHANCE" -> currentField is ChanceField
-                    "COMMUNITY_CHEST" -> currentField is CommunityChestField
-                    else -> {
-                        messagingTemplate.convertAndSend(
-                            "/topic/game/${action.gameId}",
-                            GameEvent(
-                                gameId = action.gameId,
-                                event = "ERROR",
-                                message = "Unknown card type: $cardType"
-                            )
-                        )
-                        return
-                    }
-                }
-
-                if (!isValidFieldType) {
-                    messagingTemplate.convertAndSend(
-                        "/topic/game/${action.gameId}",
-                        GameEvent(
-                            gameId = action.gameId,
-                            event = "ERROR",
-                            gameState = gameState,
-                            message = "You must be on a $cardType field to draw this card."
-                        )
-                    )
-                    return
-                }
-
-                val card = when (cardType) {
-                    "CHANCE" -> drawChanceCard(gameState)
-                    "COMMUNITY_CHEST" -> drawCommunityChestCard(gameState)
-                    else -> return  // Should not reach here due to earlier validation
-                }
-
-                gameState.currentActionCard = card
-                gameState.hasDrawnCardThisTurn = true
-                sendGameEvent(
-                    action,
-                    gameState,
-                    "ACTION_DRAWN",
-                    "Card drawn: ${card.description}"
-                )
-            }
-
-            "EXECUTE_ACTION" -> {
-                if (gameState.currentPlayer?.id != action.playerId) {
-                    messagingTemplate.convertAndSend(
-                        "/topic/game/${action.gameId}",
-                        GameEvent(
-                            gameId = action.gameId,
-                            event = "ERROR",
-                            gameState = gameState,
-                            message = "It is not your turn."
-                        )
-                    )
-                    return
-                }
-
-                if (gameState.currentActionCard == null) {
-                    messagingTemplate.convertAndSend(
-                        "/topic/game/${action.gameId}",
-                        GameEvent(
-                            gameId = action.gameId,
-                            event = "ERROR",
-                            gameState = gameState,
-                            message = "No action card to execute."
-                        )
-                    )
-                    return
-                }
-
-                val card = gameState.currentActionCard!!
-                executeCardAction(gameState, card, action.playerId)
-                gameState.currentActionCard = null
-
-                sendGameEvent(
-                    action,
-                    gameState,
-                    "ACTION_EXECUTED",
-                    "Action executed: ${card.description}"
-                )
-            }
-
-            "BUY_PROPERTY" -> {
-                if (gameState.currentPlayer?.id != action.playerId) {
-                    messagingTemplate.convertAndSend(
-                        "/topic/game/${action.gameId}",
-                        GameEvent(
-                            gameId = action.gameId,
-                            event = "ERROR",
-                            gameState = gameState,
-                            message = "It is not your turn."
-                        )
-                    )
-                    return
-                }
-
-                if (gameState.phase != GamePhase.BUYING) {
-                    messagingTemplate.convertAndSend(
-                        "/topic/game/${action.gameId}",
-                        GameEvent(
-                            gameId = action.gameId,
-                            event = "ERROR",
-                            gameState = gameState,
-                            message = "Property can only be bought during the buying phase."
-                        )
-                    )
-                    return
-                }
-
-                val fieldIdStr = action.payload["fieldId"]
-                if (fieldIdStr.isNullOrBlank()) {
-                    messagingTemplate.convertAndSend(
-                        "/topic/game/${action.gameId}",
-                        GameEvent(
-                            gameId = action.gameId,
-                            event = "ERROR",
-                            gameState = gameState,
-                            message = "fieldId must be specified in payload."
-                        )
-                    )
-                    return
-                }
-
-                val fieldId = fieldIdStr.toIntOrNull()
-                if (fieldId == null || fieldId < 0 || fieldId >= gameState.fields.size) {
-                    messagingTemplate.convertAndSend(
-                        "/topic/game/${action.gameId}",
-                        GameEvent(
-                            gameId = action.gameId,
-                            event = "ERROR",
-                            gameState = gameState,
-                            message = "Invalid fieldId."
-                        )
-                    )
-                    return
-                }
-
-                val player = gameState.currentPlayer!!
-
-                if (player.position != fieldId) {
-                    messagingTemplate.convertAndSend(
-                        "/topic/game/${action.gameId}",
-                        GameEvent(
-                            gameId = action.gameId,
-                            event = "ERROR",
-                            gameState = gameState,
-                            message = "You can only buy the field you are currently standing on."
-                        )
-                    )
-                    return
-                }
-
-                val field = gameState.fields[fieldId]
-
-                val price = when (field) {
-                    is PropertyField -> field.price
-                    is RailroadField -> field.price
-                    is UtilityField -> field.price
-                    else -> {
-                        messagingTemplate.convertAndSend(
-                            "/topic/game/${action.gameId}",
-                            GameEvent(
-                                gameId = action.gameId,
-                                event = "ERROR",
-                                gameState = gameState,
-                                message = "This field cannot be bought."
-                            )
-                        )
-                        return
-                    }
-                }
-
-                val ownerId = when (field) {
-                    is PropertyField -> field.ownerId
-                    is RailroadField -> field.ownerId
-                    is UtilityField -> field.ownerId
-                    else -> null
-                }
-
-                if (ownerId != null) {
-                    messagingTemplate.convertAndSend(
-                        "/topic/game/${action.gameId}",
-                        GameEvent(
-                            gameId = action.gameId,
-                            event = "ERROR",
-                            gameState = gameState,
-                            message = "${field.name} is already owned by another player."
-                        )
-                    )
-                    return
-                }
-
-                if (player.money < price) {
-                    messagingTemplate.convertAndSend(
-                        "/topic/game/${action.gameId}",
-                        GameEvent(
-                            gameId = action.gameId,
-                            event = "ERROR",
-                            gameState = gameState,
-                            message = "You don't have enough money to buy ${field.name}. Price: $$price, Your Money: $${player.money}"
-                        )
-                    )
-                    return
-                }
-
-                player.money -= price
-
-                when (field) {
-                    is PropertyField -> field.ownerId = player.id
-                    is RailroadField -> field.ownerId = player.id
-                    is UtilityField -> field.ownerId = player.id
-                }
-
-                player.ownedPropertyIds.add(fieldId)
-
-                sendGameEvent(
-                    action,
-                    gameState,
-                    "PROPERTY_BOUGHT",
-                    "${player.name} bought ${field.name} for $$price."
-                )
-            }
+            "BUY_PROPERTY" -> handleBuyProperty(action, gameState)
 
             "BUY_HOUSE" -> {
                 handleBuyHouse(action, gameState)
@@ -1142,6 +720,426 @@ class WebSocketBrokerController(
                 gameState = gameState,
                 message = message
             )
+        )
+    }
+
+    private fun handleEndTurn(
+        action: GameAction,
+        gameState: GameState
+    ) {
+        val player = gameState.currentPlayer
+        val isDoublet = gameState.lastDiceRoll?.isDouble == true
+
+        if (player != null && isDoublet && !player.inJail && player.consecutiveDoublets > 0) {
+            gameState.endCurrentTurn()
+            gameState.phase = GamePhase.ROLLING
+            sendGameEvent(
+                action,
+                gameState,
+                "TURN_ENDED",
+                "${player.name} rolled a doublet and gets another turn!"
+            )
+        } else {
+            if (player != null) player.consecutiveDoublets = 0
+
+            gameState.endCurrentTurn()
+            gameState.advanceTurn()
+
+            sendGameEvent(
+                action,
+                gameState,
+                "TURN_ENDED",
+                "Next turn: ${gameState.currentPlayer?.name}."
+            )
+        }
+    }
+
+    private fun handleExecuteAction(
+        action: GameAction,
+        gameState: GameState
+    ) {
+        if (gameState.currentPlayer?.id != action.playerId) {
+            messagingTemplate.convertAndSend(
+                "/topic/game/${action.gameId}",
+                GameEvent(
+                    gameId = action.gameId,
+                    event = "ERROR",
+                    gameState = gameState,
+                    message = "It is not your turn."
+                )
+            )
+            return
+        }
+
+        if (gameState.currentActionCard == null) {
+            messagingTemplate.convertAndSend(
+                "/topic/game/${action.gameId}",
+                GameEvent(
+                    gameId = action.gameId,
+                    event = "ERROR",
+                    gameState = gameState,
+                    message = "No action card to execute."
+                )
+            )
+            return
+        }
+
+        val card = gameState.currentActionCard!!
+
+        executeCardAction(gameState, card, action.playerId)
+
+        gameState.currentActionCard = null
+
+        sendGameEvent(
+            action,
+            gameState,
+            "ACTION_EXECUTED",
+            "Action executed: ${card.description}"
+        )
+    }
+
+    private fun handleDrawCard(
+        action: GameAction,
+        gameState: GameState
+    ) {
+        if (gameState.hasDrawnCardThisTurn) {
+            messagingTemplate.convertAndSend(
+                "/topic/game/${action.gameId}",
+                GameEvent(
+                    gameId = action.gameId,
+                    event = "ERROR",
+                    gameState = gameState,
+                    message = "You can only draw one card per turn."
+                )
+            )
+            return
+        }
+
+        if (gameState.currentPlayer?.id != action.playerId) {
+            messagingTemplate.convertAndSend(
+                "/topic/game/${action.gameId}",
+                GameEvent(
+                    gameId = action.gameId,
+                    event = "ERROR",
+                    gameState = gameState,
+                    message = "It is not your turn."
+                )
+            )
+            return
+        }
+
+        val cardType = action.payload["cardType"]
+
+        if (cardType == null) {
+            messagingTemplate.convertAndSend(
+                "/topic/game/${action.gameId}",
+                GameEvent(
+                    gameId = action.gameId,
+                    event = "ERROR",
+                    gameState = gameState,
+                    message = "cardType must be specified in payload."
+                )
+            )
+            return
+        }
+
+        val currentField =
+            gameState.fields.getOrNull(gameState.currentPlayer?.position ?: -1)
+
+        val isValidFieldType = when (cardType) {
+            "CHANCE" -> currentField is ChanceField
+            "COMMUNITY_CHEST" -> currentField is CommunityChestField
+            else -> {
+                messagingTemplate.convertAndSend(
+                    "/topic/game/${action.gameId}",
+                    GameEvent(
+                        gameId = action.gameId,
+                        event = "ERROR",
+                        message = "Unknown card type: $cardType"
+                    )
+                )
+                return
+            }
+        }
+
+        if (!isValidFieldType) {
+            messagingTemplate.convertAndSend(
+                "/topic/game/${action.gameId}",
+                GameEvent(
+                    gameId = action.gameId,
+                    event = "ERROR",
+                    gameState = gameState,
+                    message = "You must be on a $cardType field to draw this card."
+                )
+            )
+            return
+        }
+
+        val card = when (cardType) {
+            "CHANCE" -> drawChanceCard(gameState)
+            "COMMUNITY_CHEST" -> drawCommunityChestCard(gameState)
+            else -> return
+        }
+
+        gameState.currentActionCard = card
+        gameState.hasDrawnCardThisTurn = true
+
+        sendGameEvent(
+            action,
+            gameState,
+            "ACTION_DRAWN",
+            "Card drawn: ${card.description}"
+        )
+    }
+
+    private fun handleRollDice(
+        action: GameAction,
+        gameState: GameState
+    ) {
+        if (gameState.currentPlayer?.id != action.playerId) {
+            messagingTemplate.convertAndSend(
+                "/topic/game/${action.gameId}",
+                GameEvent(
+                    gameId = action.gameId,
+                    event = "ERROR",
+                    gameState = gameState,
+                    message = "It is not your turn."
+                )
+            )
+            return
+        }
+
+        if (gameState.phase != GamePhase.ROLLING) {
+            messagingTemplate.convertAndSend(
+                "/topic/game/${action.gameId}",
+                GameEvent(
+                    gameId = action.gameId,
+                    event = "ERROR",
+                    gameState = gameState,
+                    message = "Dice can only be rolled during the rolling phase."
+                )
+            )
+            return
+        }
+
+        val roll = createDiceRoll(action)
+        gameState.lastDiceRoll = roll
+
+        val player = gameState.currentPlayer!!
+        var eventMessage = "${player.name} rolled ${roll.die1} + ${roll.die2} = ${roll.total}."
+
+        if (player.inJail) {
+            eventMessage = handleJailRoll(gameState, player, roll, eventMessage)
+        } else {
+            eventMessage = handleNormalRoll(gameState, player, roll, eventMessage)
+        }
+
+        sendGameEvent(
+            action,
+            gameState,
+            "DICE_ROLLED",
+            eventMessage
+        )
+    }
+
+    private fun createDiceRoll(action: GameAction): DiceRoll {
+        val isCheating = action.payload["cheat"] == "true"
+
+        return if (isCheating) {
+            println("DiceDebug: CHEAT DETECTED for player ${action.playerId}! Rolling double six.")
+            DiceRoll(6, 6)
+        } else {
+            DiceRoll(
+                die1 = (1..6).random(),
+                die2 = (1..6).random()
+            )
+        }
+    }
+
+    private fun handleJailRoll(
+        gameState: GameState,
+        player: Player,
+        roll: DiceRoll,
+        message: String
+    ): String {
+        var eventMessage = message
+
+        if (roll.isDouble) {
+            player.inJail = false
+            player.jailTurns = 0
+            eventMessage += " They rolled a doublet and got out of jail!"
+
+            movePlayerAfterRoll(gameState, player, roll.total)
+
+            player.consecutiveDoublets = 0
+            gameState.phase = GamePhase.BUYING
+        } else {
+            player.jailTurns++
+
+            if (player.jailTurns >= 3) {
+                player.money -= 50
+                player.inJail = false
+                player.jailTurns = 0
+                eventMessage += " Failed 3rd attempt. Paid 50M to get out!"
+
+                movePlayerAfterRoll(gameState, player, roll.total)
+                gameState.phase = GamePhase.BUYING
+            } else {
+                eventMessage += " Still in jail (turn ${player.jailTurns}/3)."
+                gameState.phase = GamePhase.TURN_END
+            }
+        }
+
+        return eventMessage
+    }
+
+    private fun handleNormalRoll(
+        gameState: GameState,
+        player: Player,
+        roll: DiceRoll,
+        message: String
+    ): String {
+        var eventMessage = message
+
+        if (roll.isDouble) {
+            player.consecutiveDoublets++
+
+            if (player.consecutiveDoublets >= 3) {
+                player.inJail = true
+                player.position = 10
+                player.jailTurns = 0
+                player.consecutiveDoublets = 0
+                eventMessage += " Rolled 3 doublets! Go to Jail!"
+                gameState.phase = GamePhase.BUYING
+            } else {
+                eventMessage += " Rolled a doublet! Gets another turn."
+                eventMessage = movePlayerAndHandleGoToJail(gameState, player, roll.total, eventMessage)
+            }
+        } else {
+            player.consecutiveDoublets = 0
+            eventMessage = movePlayerAndHandleGoToJail(gameState, player, roll.total, eventMessage)
+        }
+
+        return eventMessage
+    }
+
+    private fun movePlayerAfterRoll(
+        gameState: GameState,
+        player: Player,
+        rollTotal: Int
+    ) {
+        val oldPos = player.position
+        val newPos = (oldPos + rollTotal) % gameState.fields.size
+        player.position = newPos
+    }
+
+    private fun movePlayerAndHandleGoToJail(
+        gameState: GameState,
+        player: Player,
+        rollTotal: Int,
+        message: String
+    ): String {
+        var eventMessage = message
+
+        val oldPos = player.position
+        val newPos = (oldPos + rollTotal) % gameState.fields.size
+
+        if (newPos < oldPos) {
+            player.money += 200
+            eventMessage += " and passed Go (+200€)."
+        }
+
+        player.position = newPos
+        gameState.phase = GamePhase.BUYING
+
+        if (newPos == 30) {
+            player.inJail = true
+            player.position = 10
+            player.jailTurns = 0
+            player.consecutiveDoublets = 0
+            eventMessage += " Landed on Go To Jail!"
+            gameState.phase = GamePhase.TURN_END
+        }
+
+        return eventMessage
+    }
+
+    private fun handleBuyProperty(
+        action: GameAction,
+        gameState: GameState
+    ) {
+        if (gameState.currentPlayer?.id != action.playerId) {
+            sendGameError(action, gameState, "It is not your turn.")
+            return
+        }
+
+        if (gameState.phase != GamePhase.BUYING) {
+            sendGameError(action, gameState, "Property can only be bought during the buying phase.")
+            return
+        }
+
+        val fieldId = action.payload["fieldId"]?.toIntOrNull()
+
+        if (fieldId == null || fieldId !in gameState.fields.indices) {
+            sendGameError(action, gameState, INVALID_FIELD_ID_MESSAGE)
+            return
+        }
+
+        val player = gameState.currentPlayer!!
+
+        if (player.position != fieldId) {
+            sendGameError(action, gameState, "You can only buy the field you are currently standing on.")
+            return
+        }
+
+        val field = gameState.fields[fieldId]
+
+        val price = when (field) {
+            is PropertyField -> field.price
+            is RailroadField -> field.price
+            is UtilityField -> field.price
+            else -> {
+                sendGameError(action, gameState, "This field cannot be bought.")
+                return
+            }
+        }
+
+        val ownerId = when (field) {
+            is PropertyField -> field.ownerId
+            is RailroadField -> field.ownerId
+            is UtilityField -> field.ownerId
+            else -> null
+        }
+
+        if (ownerId != null) {
+            sendGameError(action, gameState, "${field.name} is already owned by another player.")
+            return
+        }
+
+        if (player.money < price) {
+            sendGameError(
+                action,
+                gameState,
+                "You don't have enough money to buy ${field.name}. Price: $$price, Your Money: $${player.money}"
+            )
+            return
+        }
+
+        player.money -= price
+
+        when (field) {
+            is PropertyField -> field.ownerId = player.id
+            is RailroadField -> field.ownerId = player.id
+            is UtilityField -> field.ownerId = player.id
+        }
+
+        player.ownedPropertyIds.add(fieldId)
+
+        sendGameEvent(
+            action,
+            gameState,
+            "PROPERTY_BOUGHT",
+            "${player.name} bought ${field.name} for $$price."
         )
     }
 
