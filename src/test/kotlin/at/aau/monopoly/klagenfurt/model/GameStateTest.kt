@@ -92,6 +92,44 @@ class GameStateTest {
     }
 
     @Test
+    fun `advanceTurn should reset hasDrawnChanceCardThisTurn`() {
+        val gameState = GameState(
+            gameId = "game-1",
+            fields = BoardFactory.createDefaultBoard(),
+            players = mutableListOf(Player(id = "p1", name = "Alice"), Player(id = "p2", name = "Bob"))
+        )
+        gameState.hasDrawnChanceCardThisTurn = true
+        gameState.advanceTurn()
+        assertFalse(gameState.hasDrawnChanceCardThisTurn)
+    }
+
+    @Test
+    fun `advanceTurn should reset hasDrawnCommunityChestCardThisTurn`() {
+        val gameState = GameState(
+            gameId = "game-1",
+            fields = BoardFactory.createDefaultBoard(),
+            players = mutableListOf(Player(id = "p1", name = "Alice"), Player(id = "p2", name = "Bob"))
+        )
+        gameState.hasDrawnCommunityChestCardThisTurn = true
+        gameState.advanceTurn()
+        assertFalse(gameState.hasDrawnCommunityChestCardThisTurn)
+    }
+
+    @Test
+    fun `advanceTurn should reset currentActionCard`() {
+        val gameState = GameState(
+            gameId = "game-1",
+            fields = BoardFactory.createDefaultBoard(),
+            players = mutableListOf(Player(id = "p1", name = "Alice"), Player(id = "p2", name = "Bob"))
+        )
+        gameState.currentActionCard = at.aau.monopoly.klagenfurt.model.card.ChanceCard(
+            id = 1, description = "test", action = at.aau.monopoly.klagenfurt.model.enums.CardAction.COLLECT_MONEY, amount = 100
+        )
+        gameState.advanceTurn()
+        assertNull(gameState.currentActionCard)
+    }
+
+    @Test
     fun `isGameOver should return true when no active players remain`() {
         val players = mutableListOf(
             Player(id = "1", name = "Alice", money = 0),

@@ -11,8 +11,7 @@ import at.aau.monopoly.klagenfurt.model.card.CommunityChestCard
 import at.aau.monopoly.klagenfurt.model.enums.CardAction
 import at.aau.monopoly.klagenfurt.model.enums.GamePhase
 import at.aau.monopoly.klagenfurt.model.field.PropertyField
-import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -2069,6 +2068,120 @@ class WebSocketBrokerControllerTest {
         assertEquals(false, gameState.hasDrawnChanceCardThisTurn)
         assertNull(gameState.currentActionCard)
         assertEquals(GamePhase.ROLLING, gameState.phase)
+    }
+
+    @Test
+    fun `endTurn should reset hasDrawnCommunityChestCardThisTurn`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+
+        gameState.hasDrawnCommunityChestCardThisTurn = true
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "END_TURN"
+            )
+        )
+
+        captureLastMessages(messagingTemplate, 1)
+
+        assertEquals(false, gameState.hasDrawnCommunityChestCardThisTurn)
+    }
+
+    @Test
+    fun `drawCard should emit error when community chest card already drawn this turn`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.advanceTurn()
+        gameState.currentPlayer!!.position = 2 // Community Chest field
+
+        gameState.hasDrawnCommunityChestCardThisTurn = true
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DRAW_CARD",
+                payload = mutableMapOf("cardType" to "COMMUNITY_CHEST")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("only draw one card per turn"))
+    }
+
+    @Test
+    fun `drawCard should emit error when chance card already drawn and trying community chest`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.advanceTurn()
+        gameState.currentPlayer!!.position = 2 // Community Chest field
+
+        gameState.hasDrawnChanceCardThisTurn = true
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DRAW_CARD",
+                payload = mutableMapOf("cardType" to "COMMUNITY_CHEST")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("only draw one card per turn"))
+    }
+
+    @Test
+    fun `drawCard should set hasDrawnCommunityChestCardThisTurn when drawing community chest`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.advanceTurn()
+        gameState.currentPlayer!!.position = 2 // Community Chest field
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DRAW_CARD",
+                payload = mutableMapOf("cardType" to "COMMUNITY_CHEST")
+            )
+        )
+
+        captureLastMessages(messagingTemplate, 1)
+        assertTrue(gameState.hasDrawnCommunityChestCardThisTurn)
+        assertFalse(gameState.hasDrawnChanceCardThisTurn)
+    }
+
+    @Test
+    fun `drawCard should set hasDrawnChanceCardThisTurn when drawing chance`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.advanceTurn()
+        gameState.currentPlayer!!.position = 7 // Chance field
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DRAW_CARD",
+                payload = mutableMapOf("cardType" to "CHANCE")
+            )
+        )
+
+        captureLastMessages(messagingTemplate, 1)
+        assertTrue(gameState.hasDrawnChanceCardThisTurn)
+        assertFalse(gameState.hasDrawnCommunityChestCardThisTurn)
     }
 
     @Test
