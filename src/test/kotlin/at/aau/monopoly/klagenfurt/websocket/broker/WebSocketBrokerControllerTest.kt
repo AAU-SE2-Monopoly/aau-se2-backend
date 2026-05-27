@@ -724,7 +724,7 @@ class WebSocketBrokerControllerTest {
             action = CardAction.MOVE_TO,
             targetFieldId = 0
         )
-        gameState.hasDrawnCardThisTurn = true
+        gameState.hasDrawnChanceCardThisTurn = true
 
         controller.handleAction(
             GameAction(
@@ -740,7 +740,7 @@ class WebSocketBrokerControllerTest {
         assertEquals(GamePhase.ROLLING, gameState.phase)
         assertNull(gameState.lastDiceRoll)
         assertNull(gameState.currentActionCard)
-        assertEquals(false, gameState.hasDrawnCardThisTurn)
+        assertEquals(false, gameState.hasDrawnChanceCardThisTurn)
         assertEquals("Bob", gameState.currentPlayer!!.name)
     }
 
@@ -1203,7 +1203,8 @@ class WebSocketBrokerControllerTest {
                 )
             )
 
-            gameState.hasDrawnCardThisTurn = false
+            gameState.hasDrawnChanceCardThisTurn = false
+            gameState.hasDrawnCommunityChestCardThisTurn = false
             gameState.currentActionCard = null
         }
 
@@ -2041,13 +2042,13 @@ class WebSocketBrokerControllerTest {
     }
 
     @Test
-    fun `endTurn should reset hasDrawnCardThisTurn and currentActionCard`() {
+    fun `endTurn should reset hasDrawnChanceCardThisTurn and currentActionCard`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
         gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
 
-        gameState.hasDrawnCardThisTurn = true
+        gameState.hasDrawnChanceCardThisTurn = true
         gameState.currentActionCard = ChanceCard(
             id = 1,
             description = "Collect money",
@@ -2065,7 +2066,7 @@ class WebSocketBrokerControllerTest {
 
         captureLastMessages(messagingTemplate, 1)
 
-        assertEquals(false, gameState.hasDrawnCardThisTurn)
+        assertEquals(false, gameState.hasDrawnChanceCardThisTurn)
         assertNull(gameState.currentActionCard)
         assertEquals(GamePhase.ROLLING, gameState.phase)
     }

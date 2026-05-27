@@ -369,7 +369,7 @@ class WebSocketBrokerController(
 
             "DRAW_CARD" -> {
                 //validate if the player has already drawn a card this turn (only one card per turn allowed)
-                if (gameState.hasDrawnCardThisTurn) {
+                if (gameState.hasDrawnChanceCardThisTurn || gameState.hasDrawnCommunityChestCardThisTurn) {
                     messagingTemplate.convertAndSend(
                         "/topic/game/${action.gameId}",
                         GameEvent(
@@ -448,7 +448,10 @@ class WebSocketBrokerController(
                 }
 
                 gameState.currentActionCard = card
-                gameState.hasDrawnCardThisTurn = true
+                when (cardType) {
+                    "CHANCE" -> gameState.hasDrawnChanceCardThisTurn = true
+                    "COMMUNITY_CHEST" -> gameState.hasDrawnCommunityChestCardThisTurn = true
+                }
                 messagingTemplate.convertAndSend(
                     "/topic/game/${action.gameId}",
                     GameEvent(
