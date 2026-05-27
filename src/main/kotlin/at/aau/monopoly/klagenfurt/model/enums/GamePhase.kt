@@ -7,7 +7,6 @@ enum class GamePhase {
     AUCTIONING,
     PAYING_RENT,
     BANKRUPTCY,
-    MORTGAGE_SELECTION,
     TURN_END,
     FINISHED
 }

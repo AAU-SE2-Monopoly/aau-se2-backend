@@ -784,18 +784,12 @@ class WebSocketBrokerController(
                 }
                 val field = gameState.fields.find { it.id == fieldId }
                 if (field is OwnableField) {
-                    val ownerId = field.ownerId ?: return  // owner required for rent calculation
-                    val rent = when (field) {
-                        is PropertyField -> RentCalculator.calculatePropertyRent(field, gameState.fields, ownerId)
-                        is RailroadField -> RentCalculator.calculateRailroadRent(field, gameState.fields, ownerId)
-                        is UtilityField -> {
-                            val diceTotal = gameState.lastDiceRoll?.total ?: 0
-                            RentCalculator.calculateUtilityRent(field, gameState.fields, ownerId, diceTotal)
-                        }
-                        else -> 0
-                    }
-                    val owner = gameState.players.find { it.id == ownerId }
-                    if (owner != null && rent > 0) {
+                    // Use pre-computed rent amount from landing phase — prevents exploit where
+                    // player sells houses to reduce rent after landing
+                    val rent = gameState.pendingRentAmount
+                    val ownerId = gameState.pendingRentOwnerId
+                    val owner = ownerId?.let { id -> gameState.players.find { it.id == id } }
+                    if (rent > 0) {
                         if (player.money < rent) {
                             messagingTemplate.convertAndSend(
                                 "/topic/game/${action.gameId}",
@@ -809,7 +803,7 @@ class WebSocketBrokerController(
                             return
                         }
                         player.money -= rent
-                        owner.money += rent
+                        if (owner != null) owner.money += rent
                     }
                     gameState.phase = GamePhase.TURN_END
                     gameState.pendingRentAmount = 0
