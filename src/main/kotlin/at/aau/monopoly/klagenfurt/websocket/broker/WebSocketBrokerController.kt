@@ -482,6 +482,11 @@ class WebSocketBrokerController(
         val property = getValidatedProperty(action, gameState) ?: return
         val player = gameState.currentPlayer!!
 
+        if (gameState.phase != GamePhase.BUYING && gameState.phase != GamePhase.TURN_END) {
+            sendGameError(action, gameState, "Hotels can only be bought during your turn.")
+            return
+        }
+
         if (property.ownerId != player.id) {
             sendGameError(action, gameState, "You can only build on your own properties.")
             return
