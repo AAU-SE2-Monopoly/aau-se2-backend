@@ -211,20 +211,6 @@ class WebSocketBrokerController(
             "BUY_HOTEL" -> {
                 handleBuyHotel(action, gameState)
             }
-            "DRAW_CARD" -> {
-                //validate if the player has already drawn a card this turn (only one card per turn allowed)
-                if (gameState.hasDrawnChanceCardThisTurn || gameState.hasDrawnCommunityChestCardThisTurn) {
-                    messagingTemplate.convertAndSend(
-                        "/topic/game/${action.gameId}",
-                        GameEvent(
-                            gameId = action.gameId,
-                            event = "ERROR",
-                            gameState = gameState,
-                            message = "You can only draw one card per turn."
-                        )
-                    )
-                    return
-                }
 
             "SELL_HOUSE" -> {
                 handleSellHouse(action, gameState)
@@ -232,257 +218,6 @@ class WebSocketBrokerController(
 
             "SELL_HOTEL" -> {
                 handleSellHotel(action, gameState)
-                val cardType = action.payload["cardType"] as? String
-                if (cardType == null) {
-                    messagingTemplate.convertAndSend(
-                        "/topic/game/${action.gameId}",
-                        GameEvent(
-                            gameId = action.gameId,
-                            event = "ERROR",
-                            gameState = gameState,
-                            message = "cardType must be specified in payload."
-                        )
-                    )
-                    return
-                }
-
-                // Validate that the player is on the correct field type
-                val currentField = gameState.fields.getOrNull(gameState.currentPlayer?.position ?: -1)
-                val isValidFieldType = when (cardType) {
-                    "CHANCE" -> currentField is ChanceField
-                    "COMMUNITY_CHEST" -> currentField is CommunityChestField
-                    else -> {
-                        messagingTemplate.convertAndSend(
-                            "/topic/game/${action.gameId}",
-                            GameEvent(
-                                gameId = action.gameId,
-                                event = "ERROR",
-                                message = "Unknown card type: $cardType"
-                            )
-                        )
-                        return
-                    }
-                }
-
-                if (!isValidFieldType) {
-                    messagingTemplate.convertAndSend(
-                        "/topic/game/${action.gameId}",
-                        GameEvent(
-                            gameId = action.gameId,
-                            event = "ERROR",
-                            gameState = gameState,
-                            message = "You must be on a $cardType field to draw this card."
-                        )
-                    )
-                    return
-                }
-
-                val card = when (cardType) {
-                    "CHANCE" -> drawChanceCard(gameState)
-                    "COMMUNITY_CHEST" -> drawCommunityChestCard(gameState)
-                    else -> return  // Should not reach here due to earlier validation
-                }
-
-                gameState.currentActionCard = card
-                when (cardType) {
-                    "CHANCE" -> gameState.hasDrawnChanceCardThisTurn = true
-                    "COMMUNITY_CHEST" -> gameState.hasDrawnCommunityChestCardThisTurn = true
-                }
-                messagingTemplate.convertAndSend(
-                    "/topic/game/${action.gameId}",
-                    GameEvent(
-                        gameId = action.gameId,
-                        event = "ACTION_DRAWN",
-                        gameState = gameState,
-                        message = "Card drawn: ${card.description}"
-                    )
-                )
-            }
-
-            "EXECUTE_ACTION" -> {
-                if (gameState.currentPlayer?.id != action.playerId) {
-                    messagingTemplate.convertAndSend(
-                        "/topic/game/${action.gameId}",
-                        GameEvent(
-                            gameId = action.gameId,
-                            event = "ERROR",
-                            gameState = gameState,
-                            message = "It is not your turn."
-                        )
-                    )
-                    return
-                }
-
-                if (gameState.currentActionCard == null) {
-                    messagingTemplate.convertAndSend(
-                        "/topic/game/${action.gameId}",
-                        GameEvent(
-                            gameId = action.gameId,
-                            event = "ERROR",
-                            gameState = gameState,
-                            message = "No action card to execute."
-                        )
-                    )
-                    return
-                }
-
-                val card = gameState.currentActionCard!!
-                executeCardAction(gameState, card, action.playerId)
-                gameState.currentActionCard = null
-
-                messagingTemplate.convertAndSend(
-                    "/topic/game/${action.gameId}",
-                    GameEvent(
-                        gameId = action.gameId,
-                        event = "ACTION_EXECUTED",
-                        gameState = gameState,
-                        message = "Action executed: ${card.description}"
-                    )
-                )
-            }
-
-            "BUY_PROPERTY" -> {
-                if (gameState.currentPlayer?.id != action.playerId) {
-                    messagingTemplate.convertAndSend(
-                        "/topic/game/${action.gameId}",
-                        GameEvent(
-                            gameId = action.gameId,
-                            event = "ERROR",
-                            gameState = gameState,
-                            message = "It is not your turn."
-                        )
-                    )
-                    return
-                }
-
-                if (gameState.phase != GamePhase.BUYING) {
-                    messagingTemplate.convertAndSend(
-                        "/topic/game/${action.gameId}",
-                        GameEvent(
-                            gameId = action.gameId,
-                            event = "ERROR",
-                            gameState = gameState,
-                            message = "Property can only be bought during the buying phase."
-                        )
-                    )
-                    return
-                }
-
-                val fieldIdStr = action.payload["fieldId"]
-                if (fieldIdStr.isNullOrBlank()) {
-                    messagingTemplate.convertAndSend(
-                        "/topic/game/${action.gameId}",
-                        GameEvent(
-                            gameId = action.gameId,
-                            event = "ERROR",
-                            gameState = gameState,
-                            message = "fieldId must be specified in payload."
-                        )
-                    )
-                    return
-                }
-
-                val fieldId = fieldIdStr.toIntOrNull()
-                if (fieldId == null || fieldId < 0 || fieldId >= gameState.fields.size) {
-                    messagingTemplate.convertAndSend(
-                        "/topic/game/${action.gameId}",
-                        GameEvent(
-                            gameId = action.gameId,
-                            event = "ERROR",
-                            gameState = gameState,
-                            message = "Invalid fieldId."
-                        )
-                    )
-                    return
-                }
-
-                val player = gameState.currentPlayer!!
-
-                if (player.position != fieldId) {
-                    messagingTemplate.convertAndSend(
-                        "/topic/game/${action.gameId}",
-                        GameEvent(
-                            gameId = action.gameId,
-                            event = "ERROR",
-                            gameState = gameState,
-                            message = "You can only buy the field you are currently standing on."
-                        )
-                    )
-                    return
-                }
-
-                val field = gameState.fields[fieldId]
-
-                val price = when (field) {
-                    is PropertyField -> field.price
-                    is RailroadField -> field.price
-                    is UtilityField -> field.price
-                    else -> {
-                        messagingTemplate.convertAndSend(
-                            "/topic/game/${action.gameId}",
-                            GameEvent(
-                                gameId = action.gameId,
-                                event = "ERROR",
-                                gameState = gameState,
-                                message = "This field cannot be bought."
-                            )
-                        )
-                        return
-                    }
-                }
-
-                val ownerId = when (field) {
-                    is PropertyField -> field.ownerId
-                    is RailroadField -> field.ownerId
-                    is UtilityField -> field.ownerId
-                    else -> null
-                }
-
-                if (ownerId != null) {
-                    messagingTemplate.convertAndSend(
-                        "/topic/game/${action.gameId}",
-                        GameEvent(
-                            gameId = action.gameId,
-                            event = "ERROR",
-                            gameState = gameState,
-                            message = "${field.name} is already owned by another player."
-                        )
-                    )
-                    return
-                }
-
-                if (player.money < price) {
-                    messagingTemplate.convertAndSend(
-                        "/topic/game/${action.gameId}",
-                        GameEvent(
-                            gameId = action.gameId,
-                            event = "ERROR",
-                            gameState = gameState,
-                            message = "You don't have enough money to buy ${field.name}. Price: $$price, Your Money: $${player.money}"
-                        )
-                    )
-                    return
-                }
-
-                player.money -= price
-
-                when (field) {
-                    is PropertyField -> field.ownerId = player.id
-                    is RailroadField -> field.ownerId = player.id
-                    is UtilityField -> field.ownerId = player.id
-                }
-
-                player.ownedPropertyIds.add(fieldId)
-
-                messagingTemplate.convertAndSend(
-                    "/topic/game/${action.gameId}",
-                    GameEvent(
-                        gameId = action.gameId,
-                        event = "PROPERTY_BOUGHT",
-                        gameState = gameState,
-                        message = "${player.name} bought ${field.name} for $$price."
-                    )
-                )
             }
 
             else -> {
@@ -490,7 +225,7 @@ class WebSocketBrokerController(
                     "/topic/game/${action.gameId}",
                     GameEvent(gameId = action.gameId, event = "ERROR", message = "Unknown action: ${action.action}")
                 )
-}
+            }
         }
     }
 
@@ -988,7 +723,7 @@ class WebSocketBrokerController(
         action: GameAction,
         gameState: GameState
     ) {
-        if (gameState.hasDrawnCardThisTurn) {
+        if (gameState.hasDrawnChanceCardThisTurn || gameState.hasDrawnCommunityChestCardThisTurn) {
             messagingTemplate.convertAndSend(
                 "/topic/game/${action.gameId}",
                 GameEvent(
@@ -1057,7 +792,10 @@ class WebSocketBrokerController(
         }
 
         gameState.currentActionCard = card
-        gameState.hasDrawnCardThisTurn = true
+        when (cardType) {
+            "CHANCE" -> gameState.hasDrawnChanceCardThisTurn = true
+            "COMMUNITY_CHEST" -> gameState.hasDrawnCommunityChestCardThisTurn = true
+        }
 
         sendGameEvent(
             action,
