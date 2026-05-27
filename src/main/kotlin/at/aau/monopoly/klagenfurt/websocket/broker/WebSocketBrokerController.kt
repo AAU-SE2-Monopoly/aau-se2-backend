@@ -195,7 +195,13 @@ class WebSocketBrokerController(
 
                 val roll = DiceRoll(die1, die2)
                 gameState.lastDiceRoll = roll
-                val player = gameState.currentPlayer!!
+                val player = gameState.currentPlayer ?: run {
+                    messagingTemplate.convertAndSend(
+                        "/topic/game/${action.gameId}",
+                        GameEvent(gameId = action.gameId, event = "ERROR", message = "No current player.")
+                    )
+                    return
+                }
                 var eventMessage = "${player.name} rolled ${roll.die1} + ${roll.die2} = ${roll.total}."
 
                 if (player.inJail) {
@@ -342,7 +348,10 @@ class WebSocketBrokerController(
                     messagingTemplate.convertAndSend("/topic/game/${action.gameId}", GameEvent(gameId = action.gameId, event = "ERROR", message = "It is not your turn."))
                     return
                 }
-                val player = gameState.currentPlayer!!
+                val player = gameState.currentPlayer ?: run {
+                    messagingTemplate.convertAndSend("/topic/game/${action.gameId}", GameEvent(gameId = action.gameId, event = "ERROR", message = "No current player."))
+                    return
+                }
                 if (!player.inJail) {
                     messagingTemplate.convertAndSend("/topic/game/${action.gameId}", GameEvent(gameId = action.gameId, event = "ERROR", message = "You are not in jail."))
                     return
@@ -370,7 +379,10 @@ class WebSocketBrokerController(
                     messagingTemplate.convertAndSend("/topic/game/${action.gameId}", GameEvent(gameId = action.gameId, event = "ERROR", message = "It is not your turn."))
                     return
                 }
-                val player = gameState.currentPlayer!!
+                val player = gameState.currentPlayer ?: run {
+                    messagingTemplate.convertAndSend("/topic/game/${action.gameId}", GameEvent(gameId = action.gameId, event = "ERROR", message = "No current player."))
+                    return
+                }
                 if (!player.inJail) {
                     messagingTemplate.convertAndSend("/topic/game/${action.gameId}", GameEvent(gameId = action.gameId, event = "ERROR", message = "You are not in jail."))
                     return
@@ -394,6 +406,18 @@ class WebSocketBrokerController(
             }
             //end turn safety
             "END_TURN" -> {
+                if (gameState.currentPlayer?.id != action.playerId) {
+                    messagingTemplate.convertAndSend(
+                        "/topic/game/${action.gameId}",
+                        GameEvent(
+                            gameId = action.gameId,
+                            event = "ERROR",
+                            gameState = gameState,
+                            message = "It is not your turn."
+                        )
+                    )
+                    return
+                }
                 if (gameState.phase != GamePhase.BUYING && gameState.phase != GamePhase.TURN_END) {
                     messagingTemplate.convertAndSend(
                         "/topic/game/${action.gameId}",
@@ -558,7 +582,13 @@ class WebSocketBrokerController(
                     return
                 }
 
-                val card = gameState.currentActionCard!!
+                val card = gameState.currentActionCard ?: run {
+                    messagingTemplate.convertAndSend(
+                        "/topic/game/${action.gameId}",
+                        GameEvent(gameId = action.gameId, event = "ERROR", gameState = gameState, message = "No action card to execute.")
+                    )
+                    return
+                }
                 executeCardAction(gameState, card, action.playerId)
                 gameState.currentActionCard = null
 
@@ -628,7 +658,13 @@ class WebSocketBrokerController(
                     return
                 }
 
-                val player = gameState.currentPlayer!!
+                val player = gameState.currentPlayer ?: run {
+                    messagingTemplate.convertAndSend(
+                        "/topic/game/${action.gameId}",
+                        GameEvent(gameId = action.gameId, event = "ERROR", gameState = gameState, message = "No current player.")
+                    )
+                    return
+                }
 
                 if (player.position != fieldId) {
                     messagingTemplate.convertAndSend(
@@ -718,6 +754,18 @@ class WebSocketBrokerController(
             }
 
             "PAY_RENT" -> {
+                if (gameState.currentPlayer?.id != action.playerId) {
+                    messagingTemplate.convertAndSend(
+                        "/topic/game/${action.gameId}",
+                        GameEvent(
+                            gameId = action.gameId,
+                            event = "ERROR",
+                            gameState = gameState,
+                            message = "It is not your turn."
+                        )
+                    )
+                    return
+                }
                 val player = gameState.currentPlayer ?: return
                 val fieldId = action.payload["fieldId"]?.toIntOrNull()
                 // validate fieldId matches pending rent or tax field
@@ -798,6 +846,18 @@ class WebSocketBrokerController(
 
             //  houses/hotel check — cannot mortgage property with buildings
             "MORTGAGE_PROPERTY" -> {
+                if (gameState.currentPlayer?.id != action.playerId) {
+                    messagingTemplate.convertAndSend(
+                        "/topic/game/${action.gameId}",
+                        GameEvent(
+                            gameId = action.gameId,
+                            event = "ERROR",
+                            gameState = gameState,
+                            message = "It is not your turn."
+                        )
+                    )
+                    return
+                }
                 val player = gameState.currentPlayer ?: return
                 val fieldId = action.payload["fieldId"]?.toIntOrNull()
                 if (fieldId != null) {
@@ -816,6 +876,18 @@ class WebSocketBrokerController(
 
             //  affordability check — player must have enough money to unmortgage
             "UNMORTGAGE_PROPERTY" -> {
+                if (gameState.currentPlayer?.id != action.playerId) {
+                    messagingTemplate.convertAndSend(
+                        "/topic/game/${action.gameId}",
+                        GameEvent(
+                            gameId = action.gameId,
+                            event = "ERROR",
+                            gameState = gameState,
+                            message = "It is not your turn."
+                        )
+                    )
+                    return
+                }
                 val player = gameState.currentPlayer ?: return
                 val fieldId = action.payload["fieldId"]?.toIntOrNull()
                 if (fieldId != null) {
@@ -841,6 +913,18 @@ class WebSocketBrokerController(
             }
 
             "SELL_HOUSE" -> {
+                if (gameState.currentPlayer?.id != action.playerId) {
+                    messagingTemplate.convertAndSend(
+                        "/topic/game/${action.gameId}",
+                        GameEvent(
+                            gameId = action.gameId,
+                            event = "ERROR",
+                            gameState = gameState,
+                            message = "It is not your turn."
+                        )
+                    )
+                    return
+                }
                 val player = gameState.currentPlayer ?: return
                 val fieldId = action.payload["fieldId"]?.toIntOrNull()
                 if (fieldId != null) {
@@ -858,6 +942,42 @@ class WebSocketBrokerController(
             }
 
             "DECLARE_BANKRUPTCY" -> {
+                if (gameState.currentPlayer?.id != action.playerId) {
+                    messagingTemplate.convertAndSend(
+                        "/topic/game/${action.gameId}",
+                        GameEvent(
+                            gameId = action.gameId,
+                            event = "ERROR",
+                            gameState = gameState,
+                            message = "It is not your turn."
+                        )
+                    )
+                    return
+                }
+                if (gameState.phase != GamePhase.PAYING_RENT) {
+                    messagingTemplate.convertAndSend(
+                        "/topic/game/${action.gameId}",
+                        GameEvent(
+                            gameId = action.gameId,
+                            event = "ERROR",
+                            gameState = gameState,
+                            message = "Bankruptcy can only be declared when a payment is due."
+                        )
+                    )
+                    return
+                }
+                if (gameState.pendingRentAmount <= 0 && gameState.pendingTaxAmount <= 0) {
+                    messagingTemplate.convertAndSend(
+                        "/topic/game/${action.gameId}",
+                        GameEvent(
+                            gameId = action.gameId,
+                            event = "ERROR",
+                            gameState = gameState,
+                            message = "No pending payment to resolve."
+                        )
+                    )
+                    return
+                }
                 val player = gameState.currentPlayer ?: return
                 val creditorId = gameState.pendingRentOwnerId
 
