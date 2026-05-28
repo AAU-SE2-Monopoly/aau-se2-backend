@@ -273,19 +273,17 @@ class GameControllerTest {
     }
 
     @Test
-    fun `closeGame should reject when game has already started`() {
+    fun `closeGame should succeed even when game has already started`() {
         val controller = GameController()
         val game = controller.createGame(hostPlayerId = "host-1")
         controller.joinGame(game.gameId, Player(id = "host-1", name = "Alice"))
         // Start the game
         controller.getGameState(game.gameId)!!.advanceTurn()
 
-        val exception = assertThrows(IllegalArgumentException::class.java) {
-            controller.closeGame(game.gameId, "host-1")
-        }
+        val closed = controller.closeGame(game.gameId, "host-1")
 
-        assertTrue(exception.message!!.contains("already started"))
-        // Game should still exist
-        assertNotNull(controller.getGameState(game.gameId))
+        assertEquals(game.gameId, closed.gameId)
+        // Game should be removed
+        assertNull(controller.getGameState(game.gameId))
     }
 }
