@@ -15,7 +15,6 @@ import at.aau.monopoly.klagenfurt.model.field.FreeParkingField
 import at.aau.monopoly.klagenfurt.model.field.OwnableField
 import at.aau.monopoly.klagenfurt.model.field.PropertyField
 import at.aau.monopoly.klagenfurt.model.field.RailroadField
-import at.aau.monopoly.klagenfurt.model.field.TaxField
 import at.aau.monopoly.klagenfurt.model.field.Field
 import at.aau.monopoly.klagenfurt.model.field.UtilityField
 import at.aau.monopoly.klagenfurt.service.PaymentService
@@ -295,18 +294,10 @@ class WebSocketBrokerController(
                     )
                 )
 
-                // interactive payment flow — always send RENT_DUE/TAX_DUE events, never auto-deduct
+                // interactive payment flow — always send RENT_DUE event, never auto-deduct
                 val landedField = gameState.fields.getOrNull(player.position)
                 if (landedField != null) {
                     when (landedField) {
-                        is TaxField -> {
-                            val taxAmount = landedField.amount
-                            gameState.phase = GamePhase.PAYING_RENT
-                            gameState.pendingTaxAmount = taxAmount
-                            gameState.pendingTaxFieldId = landedField.id
-                            val taxEvent = GameEvent(gameId = action.gameId, event = GameEvent.TAX_DUE, gameState = gameState)
-                            messagingTemplate.convertAndSend("/topic/game/${action.gameId}", taxEvent)
-                        }
                         is OwnableField -> {
                             val ownerId = landedField.ownerId
                             if (ownerId != null && ownerId != player.id && !landedField.isMortgaged) {
@@ -769,7 +760,7 @@ class WebSocketBrokerController(
                 val player = gameState.currentPlayer ?: return
                 val fieldId = action.payload["fieldId"]?.toIntOrNull()
                 // validate fieldId matches pending rent or tax field
-                val expectedFieldId = gameState.pendingRentFieldId ?: gameState.pendingTaxFieldId
+                val expectedFieldId = gameState.pendingRentFieldId
                 if (fieldId == null || fieldId != expectedFieldId) {
                     messagingTemplate.convertAndSend(
                         "/topic/game/${action.gameId}",
@@ -810,30 +801,6 @@ class WebSocketBrokerController(
                     gameState.pendingRentOwnerId = null
                     gameState.pendingRentFieldId = null
                     val event = GameEvent(gameId = action.gameId, event = GameEvent.RENT_PAID, gameState = gameState)
-                    messagingTemplate.convertAndSend("/topic/game/${action.gameId}", event)
-                } else if (field is TaxField) {
-                    val taxAmount = gameState.pendingTaxAmount
-                    if (taxAmount > 0) {
-                        if (player.money < taxAmount) {
-                            messagingTemplate.convertAndSend(
-                                "/topic/game/${action.gameId}",
-                                GameEvent(
-                                    gameId = action.gameId,
-                                    event = GameEvent.PAYMENT_FAILED,
-                                    gameState = gameState,
-                                    message = "Insufficient funds. Need $${taxAmount}M but have $${player.money}M."
-                                )
-                            )
-                            return
-                        }
-                        player.money -= taxAmount
-                        // Tax money goes to the Free Parking pool (standard Monopoly house rule)
-                        gameState.freeParkingMoney += taxAmount
-                    }
-                    gameState.phase = GamePhase.TURN_END
-                    gameState.pendingTaxAmount = 0
-                    gameState.pendingTaxFieldId = null
-                    val event = GameEvent(gameId = action.gameId, event = GameEvent.TAX_PAID, gameState = gameState)
                     messagingTemplate.convertAndSend("/topic/game/${action.gameId}", event)
                 }
             }
@@ -960,7 +927,7 @@ class WebSocketBrokerController(
                     )
                     return
                 }
-                if (gameState.pendingRentAmount <= 0 && gameState.pendingTaxAmount <= 0) {
+                if (gameState.pendingRentAmount <= 0) {
                     messagingTemplate.convertAndSend(
                         "/topic/game/${action.gameId}",
                         GameEvent(
@@ -988,25 +955,10 @@ class WebSocketBrokerController(
                     }
                     price / 2  // mortgage value
                 }
-                val totalDebt = gameState.pendingRentAmount + gameState.pendingTaxAmount
+                val totalDebt = gameState.pendingRentAmount
                 val propertiesCount = ownedFields.size
 
-                //bankruptcy (tax debt) vs player-creditor bankruptcy
-                if (gameState.pendingTaxAmount > 0) {
-                    // Cancel all mortgages on debtor's properties
-                    gameState.fields.filterIsInstance<OwnableField>()
-                        .filter { it.ownerId == player.id }
-                        .forEach { it.isMortgaged = false }
-                    // Return jail cards to bottom of decks (just discard them)
-                    player.getOutOfJailCards = 0
-                    player.money = 0
-                    // Clear ownership of all fields
-                    gameState.fields.filterIsInstance<OwnableField>()
-                        .filter { it.ownerId == player.id }
-                        .forEach { it.ownerId = null }
-                    player.ownedPropertyIds.clear()
-                    gameState.pendingTaxAmount = 0
-                } else if (creditorId != null) {
+                if (creditorId != null) {
                     //player-creditor bankruptcy
                     val creditor = gameState.players.find { it.id == creditorId }
                     player.money = 0
@@ -1038,7 +990,6 @@ class WebSocketBrokerController(
                 gameState.pendingRentAmount = 0
                 gameState.pendingRentOwnerId = null
                 gameState.pendingRentFieldId = null
-                gameState.pendingTaxAmount = 0
                 // include bankruptcy summary data in the event
                 gameState.bankruptcyTotalAssets = totalAssetValue
                 gameState.bankruptcyTotalDebt = totalDebt

@@ -22,8 +22,6 @@ data class GameState(
     var pendingRentAmount: Int = 0,
     var pendingRentOwnerId: String? = null,
     var pendingRentFieldId: Int? = null,
-    var pendingTaxAmount: Int = 0,
-    var pendingTaxFieldId: Int? = null,
     var bankruptcyTotalAssets: Int = 0,
     var bankruptcyTotalDebt: Int = 0,
     var bankruptcyPropertiesCount: Int = 0,
@@ -53,8 +51,6 @@ data class GameState(
         pendingRentAmount = 0
         pendingRentOwnerId = null
         pendingRentFieldId = null
-        pendingTaxAmount = 0
-        pendingTaxFieldId = null
     }
 
     /** End the current player's turn without advancing to the next player yet.

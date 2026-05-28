@@ -184,21 +184,14 @@ class WebSocketBrokerControllerTest {
 
         controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "ROLL_DICE",payload = mutableMapOf("cheat" to "false")))
 
-        // Use atLeast(1) because ROLL_DICE may also send TAX_DUE/RENT_DUE/FREE_PARKING_COLLECTED
-        // depending on where the random dice land
         val destinationCaptor = ArgumentCaptor.forClass(String::class.java)
         val payloadCaptor = ArgumentCaptor.forClass(Any::class.java)
-        Mockito.verify(messagingTemplate, Mockito.atLeast(1))
+        Mockito.verify(messagingTemplate, Mockito.times(1))
             .convertAndSend(destinationCaptor.capture(), payloadCaptor.capture())
-        val allMessages = destinationCaptor.allValues.zip(payloadCaptor.allValues)
-        val event = allMessages.map { it.second }.filterIsInstance<GameEvent>().first { it.event == "DICE_ROLLED" }
+        val event = payloadCaptor.value as GameEvent
 
         assertEquals("DICE_ROLLED", event.event)
-        // Phase is BUYING unless the player landed on a rent/tax field (PAYING_RENT) or went to jail (TURN_END)
-        assertTrue(
-            gameState.phase in setOf(GamePhase.BUYING, GamePhase.PAYING_RENT, GamePhase.TURN_END),
-            "Expected phase BUYING, PAYING_RENT, or TURN_END after dice roll, got ${gameState.phase}"
-        )
+        assertEquals(GamePhase.BUYING, gameState.phase)
         assertNotNull(gameState.lastDiceRoll)
         assertTrue(gameState.lastDiceRoll!!.die1 in 1..6)
         assertTrue(gameState.lastDiceRoll!!.die2 in 1..6)
@@ -461,12 +454,10 @@ class WebSocketBrokerControllerTest {
 
         controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "ROLL_DICE"))
 
-        val destCaptor = ArgumentCaptor.forClass(String::class.java)
         val payCaptor = ArgumentCaptor.forClass(Any::class.java)
-        Mockito.verify(messagingTemplate, Mockito.atLeast(1))
-            .convertAndSend(destCaptor.capture(), payCaptor.capture())
-        val event = destCaptor.allValues.zip(payCaptor.allValues)
-            .map { it.second }.filterIsInstance<GameEvent>().first { it.event == "DICE_ROLLED" }
+        Mockito.verify(messagingTemplate, Mockito.times(1))
+            .convertAndSend(Mockito.any(String::class.java), payCaptor.capture())
+        val event = payCaptor.value as GameEvent
         assertNotNull(event.gameState!!.lastDiceRoll)
         assertTrue(event.message!!.contains("rolled"))
         assertTrue(event.message.contains("="))
@@ -1271,12 +1262,10 @@ class WebSocketBrokerControllerTest {
             )
         )
 
-        val destinationCaptor2 = ArgumentCaptor.forClass(String::class.java)
         val payloadCaptor2 = ArgumentCaptor.forClass(Any::class.java)
-        Mockito.verify(messagingTemplate, Mockito.atLeast(1))
-            .convertAndSend(destinationCaptor2.capture(), payloadCaptor2.capture())
-        val allMessages2 = destinationCaptor2.allValues.zip(payloadCaptor2.allValues)
-        val event = allMessages2.map { it.second }.filterIsInstance<GameEvent>().first { it.event == "DICE_ROLLED" }
+        Mockito.verify(messagingTemplate, Mockito.times(1))
+            .convertAndSend(Mockito.any(String::class.java), payloadCaptor2.capture())
+        val event = payloadCaptor2.value as GameEvent
 
         assertEquals("DICE_ROLLED", event.event)
         assertNotNull(gameState.lastDiceRoll)
@@ -2177,12 +2166,10 @@ class WebSocketBrokerControllerTest {
             player.position = 38
             player.money = 1500
             controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "ROLL_DICE"))
-            val destCaptor = ArgumentCaptor.forClass(String::class.java)
             val payCaptor = ArgumentCaptor.forClass(Any::class.java)
-            Mockito.verify(messagingTemplate, Mockito.atLeast(1))
-                .convertAndSend(destCaptor.capture(), payCaptor.capture())
-            val allMsgs = destCaptor.allValues.zip(payCaptor.allValues)
-            val event = allMsgs.map { it.second }.filterIsInstance<GameEvent>().first { it.event == "DICE_ROLLED" }
+            Mockito.verify(messagingTemplate, Mockito.times(1))
+                .convertAndSend(Mockito.any(String::class.java), payCaptor.capture())
+            val event = payCaptor.value as GameEvent
             if (!gameState.lastDiceRoll!!.isDouble) {
                 assertEquals(1700, player.money)
                 assertTrue(event.message!!.contains("passed Go"))
