@@ -27,9 +27,7 @@ import at.aau.monopoly.klagenfurt.model.GameState
 class WebSocketBrokerController(
     private val messagingTemplate: SimpMessagingTemplate,
     private val gameController: GameController
-
 ) {
-
 
     private fun normalizeIconId(iconId: String?): String =
         iconId?.takeIf { it.isNotBlank() } ?: "lindwurm"
@@ -227,7 +225,7 @@ class WebSocketBrokerController(
                     "/topic/game/${action.gameId}",
                     GameEvent(gameId = action.gameId, event = "ERROR", message = "Unknown action: ${action.action}")
                 )
-}
+            }
         }
     }
 
@@ -725,7 +723,7 @@ class WebSocketBrokerController(
         action: GameAction,
         gameState: GameState
     ) {
-        if (gameState.hasDrawnCardThisTurn) {
+        if (gameState.hasDrawnChanceCardThisTurn || gameState.hasDrawnCommunityChestCardThisTurn) {
             messagingTemplate.convertAndSend(
                 "/topic/game/${action.gameId}",
                 GameEvent(
@@ -794,7 +792,10 @@ class WebSocketBrokerController(
         }
 
         gameState.currentActionCard = card
-        gameState.hasDrawnCardThisTurn = true
+        when (cardType) {
+            "CHANCE" -> gameState.hasDrawnChanceCardThisTurn = true
+            "COMMUNITY_CHEST" -> gameState.hasDrawnCommunityChestCardThisTurn = true
+        }
 
         sendGameEvent(
             action,

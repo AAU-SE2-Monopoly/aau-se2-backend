@@ -18,7 +18,8 @@ data class GameState(
     var lastDiceRoll: DiceRoll? = null, // replaced Pair with serializable DiceRoll
     val hostPlayerId: String = "", // the player who created the game (host)
     var currentActionCard: Card? = null, // Current action card (Chance/Community Chest) waiting for execution
-    var hasDrawnCardThisTurn: Boolean = false // Track if player has already drawn a card this turn
+    var hasDrawnChanceCardThisTurn: Boolean = false,
+    var hasDrawnCommunityChestCardThisTurn: Boolean = false
 ) {
     /** The player whose turn it currently is. */
     val currentPlayer: Player?
@@ -31,7 +32,8 @@ data class GameState(
         }
         phase = GamePhase.ROLLING
         currentActionCard = null
-        hasDrawnCardThisTurn = false
+        hasDrawnChanceCardThisTurn = false
+        hasDrawnCommunityChestCardThisTurn = false
     }
 
     /** End the current player's turn without advancing to the next player yet.
