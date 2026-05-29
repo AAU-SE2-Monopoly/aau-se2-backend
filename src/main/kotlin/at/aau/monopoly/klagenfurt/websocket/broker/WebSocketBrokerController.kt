@@ -333,6 +333,19 @@ class WebSocketBrokerController(
     /**
      * Draw a Chance card from the deck. If the deck is empty, shuffle all cards back.
      */
+    private fun findNearestOfType(
+        currentPos: Int,
+        fields: List<Field>,
+        predicate: (Field) -> Boolean
+    ): Int {
+        val size = fields.size
+        for (i in 1..size) {
+            val idx = (currentPos + i) % size
+            if (predicate(fields[idx])) return idx
+        }
+        return -1
+    }
+    
     private fun drawChanceCard(gameState: GameState): Card {
         if (gameState.chanceCards.isEmpty()) {
             gameState.chanceCards.addAll(
@@ -377,9 +390,13 @@ class WebSocketBrokerController(
             CardAction.MOVE_TO -> {
                 if (card.targetFieldId != null) {
                     val oldPosition = player.position
-                    player.position = card.targetFieldId!!
-                    // If moved past or to Go (position 0), collect $200
-                    if (card.targetFieldId!! < oldPosition) {
+                    val target = when (card.targetFieldId) {
+                        -1 -> findNearestOfType(oldPosition, gameState.fields) { it is RailroadField }
+                        -2 -> findNearestOfType(oldPosition, gameState.fields) { it is UtilityField }
+                        else -> card.targetFieldId!!
+                    }
+                    player.position = target
+                    if (target < oldPosition) {
                         player.money += 200
                     }
                 }
