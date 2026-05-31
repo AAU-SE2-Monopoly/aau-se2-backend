@@ -17,6 +17,8 @@ import at.aau.monopoly.klagenfurt.model.field.OwnableField
 import at.aau.monopoly.klagenfurt.model.field.PropertyField
 import at.aau.monopoly.klagenfurt.model.field.RailroadField
 import at.aau.monopoly.klagenfurt.model.field.UtilityField
+import at.aau.monopoly.klagenfurt.model.PaymentSource
+import at.aau.monopoly.klagenfurt.model.PendingPayment
 import at.aau.monopoly.klagenfurt.service.PaymentService
 import at.aau.monopoly.klagenfurt.service.RentCalculator
 import kotlin.math.ceil
@@ -738,11 +740,16 @@ class WebSocketBrokerController(
         }
 
         val card = gameState.currentActionCard!!
-
+        val player = gameState.players.find { it.id == action.playerId }
+            ?: run {
+                sendGameError(action, gameState, "Player not found in game.")
+                return
+            }
         executeCardAction(gameState, card, action.playerId)
-
+        if (card.action == CardAction.MOVE_TO || card.action == CardAction.MOVE_FORWARD) {
+            resolveLandingEffects(action, gameState, player)
+        }
         gameState.currentActionCard = null
-
         sendGameEvent(
             action,
             gameState,
@@ -755,20 +762,12 @@ class WebSocketBrokerController(
         action: GameAction,
         gameState: GameState
     ) {
-        if (gameState.hasDrawnChanceCardThisTurn || gameState.hasDrawnCommunityChestCardThisTurn) {
-            messagingTemplate.convertAndSend(
-                "/topic/game/${action.gameId}",
-                GameEvent(
-                    gameId = action.gameId,
-                    event = "ERROR",
-                    gameState = gameState,
-                    message = "You can only draw one card per turn."
-                )
-            )
+        if (!validateCurrentPlayerTurn(action, gameState)) return
+
+        if (gameState.currentActionCard != null) {
+            sendGameError(action, gameState, "You have already drawn a card this turn. Execute or end your turn first.")
             return
         }
-
-        if (!validateCurrentPlayerTurn(action, gameState)) return
 
         val cardType = action.payload["cardType"]
 
@@ -824,10 +823,6 @@ class WebSocketBrokerController(
         }
 
         gameState.currentActionCard = card
-        when (cardType) {
-            "CHANCE" -> gameState.hasDrawnChanceCardThisTurn = true
-            "COMMUNITY_CHEST" -> gameState.hasDrawnCommunityChestCardThisTurn = true
-        }
 
         sendGameEvent(
             action,
@@ -1102,9 +1097,12 @@ class WebSocketBrokerController(
 
                     if (rent > 0) {
                         gameState.phase = GamePhase.PAYING_RENT
-                        gameState.pendingRentAmount = rent
-                        gameState.pendingRentOwnerId = ownerId
-                        gameState.pendingRentFieldId = landedField.id
+                        gameState.pendingPayment = PendingPayment(
+                            amount = rent,
+                            source = PaymentSource.RENT,
+                            sourceFieldId = landedField.id,
+                            creditorPlayerId = ownerId
+                        )
                         messagingTemplate.convertAndSend(
                             "/topic/game/${action.gameId}",
                             GameEvent(gameId = action.gameId, event = GameEvent.RENT_DUE, gameState = gameState)
@@ -1131,57 +1129,73 @@ class WebSocketBrokerController(
         if (!validateCurrentPlayerTurn(action, gameState)) return
 
         if (gameState.phase != GamePhase.PAYING_RENT) {
-            sendGameError(action, gameState, "Rent can only be paid when rent is due.")
+            sendGameError(action, gameState, "Payment can only be made when payment is due.")
+            return
+        }
+
+        val pending = gameState.pendingPayment ?: return
+        if (pending.amount <= 0) {
+            sendGameError(action, gameState, "No pending payment to pay.")
             return
         }
 
         val player = gameState.currentPlayer!!
         val fieldId = action.payload["fieldId"]?.toIntOrNull()
-        val expectedFieldId = gameState.pendingRentFieldId
 
-        if (fieldId == null || fieldId != expectedFieldId) {
-            sendGameError(action, gameState, "Invalid fieldId for rent payment. Expected: $expectedFieldId, got: $fieldId")
-            return
+        // If the pending payment has a sourceFieldId, validate that it matches the payload
+        pending.sourceFieldId?.let { expectedId ->
+            if (fieldId == null || fieldId != expectedId) {
+                sendGameError(action, gameState, "Invalid fieldId for payment. Expected: $expectedId, got: $fieldId")
+                return
+            }
         }
 
-        val field = gameState.fields.find { it.id == fieldId }
-        if (field !is OwnableField) {
-            sendGameError(action, gameState, "Invalid fieldId for rent payment.")
-            return
+        // Process payment based on source
+        when (pending.source) {
+            PaymentSource.RENT -> {
+                // Rent: money goes to the creditor player
+                val creditorId = pending.creditorPlayerId
+                if (creditorId == null) {
+                    sendGameError(action, gameState, "Invalid pending payment: missing creditor for rent.")
+                    return
+                }
+                val creditor = gameState.players.find { it.id == creditorId }
+                if (creditor == null || creditor.isBankrupt()) {
+                    sendGameError(action, gameState, "Creditor not found or bankrupt.")
+                    return
+                }
+                if (player.money < pending.amount) {
+                    sendPaymentFailed(action, gameState, pending.amount)
+                    return
+                }
+                player.money -= pending.amount
+                creditor.money += pending.amount
+            }
+            else -> {
+                sendGameError(action, gameState, "Unsupported payment source: ${pending.source}")
+                return
+            }
         }
 
-        val rent = gameState.pendingRentAmount
-        val ownerId = gameState.pendingRentOwnerId
-        val owner = ownerId?.let { id -> gameState.players.find { it.id == id } }
-
-        if (rent <= 0) {
-            sendGameError(action, gameState, "No pending rent to pay.")
-            return
-        }
-
-        if (player.money < rent) {
-            messagingTemplate.convertAndSend(
-                "/topic/game/${action.gameId}",
-                GameEvent(
-                    gameId = action.gameId,
-                    event = GameEvent.PAYMENT_FAILED,
-                    gameState = gameState,
-                    message = "Insufficient funds. Need $${rent}M but have $${player.money}M."
-                )
-            )
-            return
-        }
-
-        player.money -= rent
-        owner?.let { it.money += rent }
+        // Clear pending payment
+        gameState.pendingPayment = null
         gameState.phase = GamePhase.TURN_END
-        gameState.pendingRentAmount = 0
-        gameState.pendingRentOwnerId = null
-        gameState.pendingRentFieldId = null
 
         messagingTemplate.convertAndSend(
             "/topic/game/${action.gameId}",
             GameEvent(gameId = action.gameId, event = GameEvent.RENT_PAID, gameState = gameState)
+        )
+    }
+
+    private fun sendPaymentFailed(action: GameAction, gameState: GameState, amount: Int) {
+        messagingTemplate.convertAndSend(
+            "/topic/game/${action.gameId}",
+            GameEvent(
+                gameId = action.gameId,
+                event = GameEvent.PAYMENT_FAILED,
+                gameState = gameState,
+                message = "Insufficient funds. Need \$$amount but have \$${gameState.currentPlayer?.money ?: 0}."
+            )
         )
     }
 
@@ -1249,13 +1263,14 @@ class WebSocketBrokerController(
             return
         }
 
-        if (gameState.pendingRentAmount <= 0) {
+        val pending = gameState.pendingPayment
+        if (pending == null || pending.amount <= 0) {
             sendGameError(action, gameState, "No pending payment to resolve.")
             return
         }
 
         val player = gameState.currentPlayer!!
-        val creditorId = gameState.pendingRentOwnerId
+        val creditorId = pending.creditorPlayerId
         val ownedFields = gameState.fields.filterIsInstance<OwnableField>()
             .filter { it.ownerId == player.id }
         val ownedFieldIds = ownedFields.map { (it as Field).id }
@@ -1268,22 +1283,28 @@ class WebSocketBrokerController(
             }
             price / 2
         }
-        val totalDebt = gameState.pendingRentAmount
+        val totalDebt = pending.amount
         val propertiesCount = ownedFields.size
 
         if (creditorId != null) {
             val creditor = gameState.players.find { it.id == creditorId }
+            val remainingCash = player.money
             player.money = 0
             val transferredIds = mutableListOf<Int>()
-            gameState.fields
-                .filter { it is OwnableField && it.ownerId == player.id }
-                .forEach { field ->
-                    (field as OwnableField).ownerId = creditorId
-                    transferredIds.add(field.id)
-                }
             if (creditor != null) {
+                creditor.money += remainingCash
                 creditor.getOutOfJailCards += player.getOutOfJailCards
+                ownedFields.forEach { field ->
+                    field.ownerId = creditorId
+                    transferredIds.add((field as Field).id)
+                }
                 creditor.ownedPropertyIds.addAll(transferredIds)
+            } else {
+                // Creditor is bankrupt or removed — return properties to bank
+                ownedFields.forEach { field ->
+                    field.ownerId = null
+                    transferredIds.add((field as Field).id)
+                }
             }
             player.getOutOfJailCards = 0
             player.ownedPropertyIds.clear()
@@ -1297,9 +1318,7 @@ class WebSocketBrokerController(
         }
 
         gameState.phase = GamePhase.TURN_END
-        gameState.pendingRentAmount = 0
-        gameState.pendingRentOwnerId = null
-        gameState.pendingRentFieldId = null
+        gameState.pendingPayment = null
         gameState.bankruptcyTotalAssets = totalAssetValue
         gameState.bankruptcyTotalDebt = totalDebt
         gameState.bankruptcyPropertiesCount = propertiesCount

@@ -8,7 +8,6 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 import org.springframework.messaging.simp.SimpMessagingTemplate
-import kotlin.jvm.functions.Function1
 
 class FindNearestOfTypeTest {
     private val controller = WebSocketBrokerController(
@@ -23,12 +22,11 @@ class FindNearestOfTypeTest {
             "findNearestOfType",
             Int::class.java,
             List::class.java,
-            Function1::class.java
+            kotlin.jvm.functions.Function1::class.java
         )
         method.isAccessible = true
-        val predicate: Function1<Field, Boolean> = Function1 { field -> field is RailroadField }
+        val predicate = { field: Field -> field is RailroadField }
         val result = method.invoke(controller, 35, fields, predicate) as Int
-        // In standard Monopoly board, the next railroad after position 35 is at index 5 (wrapping around)
         assertEquals(5, result)
     }
 
@@ -39,12 +37,11 @@ class FindNearestOfTypeTest {
             "findNearestOfType",
             Int::class.java,
             List::class.java,
-            Function1::class.java
+            kotlin.jvm.functions.Function1::class.java
         )
         method.isAccessible = true
-        val predicate: Function1<Field, Boolean> = Function1 { field -> field is UtilityField }
+        val predicate = { field: Field -> field is UtilityField }
         val result = method.invoke(controller, 35, fields, predicate) as Int
-        // In standard Monopoly board, the next utility after position 35 is at index 12 (wrapping around)
         assertEquals(12, result)
     }
 }

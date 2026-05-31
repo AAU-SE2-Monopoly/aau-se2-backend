@@ -6,6 +6,15 @@ import at.aau.monopoly.klagenfurt.model.card.CommunityChestCard
 import at.aau.monopoly.klagenfurt.model.enums.GamePhase
 import at.aau.monopoly.klagenfurt.model.field.Field
 
+enum class PaymentSource { RENT, CARD_PAY, CARD_PAY_EACH, CARD_REPAIR }
+
+data class PendingPayment(
+    val amount: Int,
+    val source: PaymentSource,
+    val sourceFieldId: Int? = null,
+    val creditorPlayerId: String? = null
+)
+
 data class GameState(
     val gameId: String,
     val fields: List<Field>,
@@ -18,11 +27,7 @@ data class GameState(
     var lastDiceRoll: DiceRoll? = null, // replaced Pair with serializable DiceRoll
     val hostPlayerId: String = "", // the player who created the game (host)
     var currentActionCard: Card? = null, // Current action card (Chance/Community Chest) waiting for execution
-    var hasDrawnChanceCardThisTurn: Boolean = false,
-    var hasDrawnCommunityChestCardThisTurn: Boolean = false,
-    var pendingRentAmount: Int = 0,
-    var pendingRentOwnerId: String? = null,
-    var pendingRentFieldId: Int? = null,
+    var pendingPayment: PendingPayment? = null,
     var bankruptcyTotalAssets: Int = 0,
     var bankruptcyTotalDebt: Int = 0,
     var bankruptcyPropertiesCount: Int = 0,
@@ -48,11 +53,7 @@ data class GameState(
         }
         phase = GamePhase.ROLLING
         currentActionCard = null
-        hasDrawnChanceCardThisTurn = false
-        hasDrawnCommunityChestCardThisTurn = false
-        pendingRentAmount = 0
-        pendingRentOwnerId = null
-        pendingRentFieldId = null
+        pendingPayment = null
     }
 
     /** End the current player's turn without advancing to the next player yet.

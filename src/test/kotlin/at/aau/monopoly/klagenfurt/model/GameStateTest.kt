@@ -92,27 +92,27 @@ class GameStateTest {
     }
 
     @Test
-    fun `advanceTurn should reset hasDrawnChanceCardThisTurn`() {
+    fun `advanceTurn should reset pendingPayment`() {
         val gameState = GameState(
             gameId = "game-1",
             fields = BoardFactory.createDefaultBoard(),
             players = mutableListOf(Player(id = "p1", name = "Alice"), Player(id = "p2", name = "Bob"))
         )
-        gameState.hasDrawnChanceCardThisTurn = true
+        gameState.pendingPayment = PendingPayment(50, PaymentSource.RENT, creditorPlayerId = "p1")
         gameState.advanceTurn()
-        assertFalse(gameState.hasDrawnChanceCardThisTurn)
+        assertNull(gameState.pendingPayment)
     }
 
     @Test
-    fun `advanceTurn should reset hasDrawnCommunityChestCardThisTurn`() {
+    fun `advanceTurn should keep pendingPayment null when none was set`() {
         val gameState = GameState(
             gameId = "game-1",
             fields = BoardFactory.createDefaultBoard(),
             players = mutableListOf(Player(id = "p1", name = "Alice"), Player(id = "p2", name = "Bob"))
         )
-        gameState.hasDrawnCommunityChestCardThisTurn = true
+
         gameState.advanceTurn()
-        assertFalse(gameState.hasDrawnCommunityChestCardThisTurn)
+        assertNull(gameState.pendingPayment)
     }
 
     @Test

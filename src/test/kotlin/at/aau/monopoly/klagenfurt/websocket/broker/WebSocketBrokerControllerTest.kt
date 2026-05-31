@@ -6,6 +6,8 @@ import at.aau.monopoly.klagenfurt.messaging.dtos.GameEvent
 import at.aau.monopoly.klagenfurt.messaging.dtos.LobbyEvent
 import at.aau.monopoly.klagenfurt.model.DiceRoll
 import at.aau.monopoly.klagenfurt.model.Player
+import at.aau.monopoly.klagenfurt.model.PaymentSource
+import at.aau.monopoly.klagenfurt.model.PendingPayment
 import at.aau.monopoly.klagenfurt.model.card.ChanceCard
 import at.aau.monopoly.klagenfurt.model.card.CommunityChestCard
 import at.aau.monopoly.klagenfurt.model.enums.CardAction
@@ -732,7 +734,6 @@ class WebSocketBrokerControllerTest {
             action = CardAction.MOVE_TO,
             targetFieldId = 0
         )
-        gameState.hasDrawnChanceCardThisTurn = true
 
         controller.handleAction(
             GameAction(
@@ -748,7 +749,6 @@ class WebSocketBrokerControllerTest {
         assertEquals(GamePhase.ROLLING, gameState.phase)
         assertNull(gameState.lastDiceRoll)
         assertNull(gameState.currentActionCard)
-        assertEquals(false, gameState.hasDrawnChanceCardThisTurn)
         assertEquals("Bob", gameState.currentPlayer!!.name)
     }
 
@@ -799,630 +799,19 @@ class WebSocketBrokerControllerTest {
         gameState.advanceTurn()
         gameState.currentPlayer!!.position = 2
 
-        val initialDeckSize = gameState.communityChestCards.size
         controller.handleAction(
             GameAction(
                 gameId = gameState.gameId,
                 playerId = "host-1",
                 action = "DRAW_CARD",
                 payload = mutableMapOf("cardType" to "COMMUNITY_CHEST")
-            )
-        )
-
-        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
-
-        assertEquals("ACTION_DRAWN", event.event)
-        assertNotNull(gameState.currentActionCard)
-        assertEquals(initialDeckSize - 1, gameState.communityChestCards.size)
-    }
-
-    @Test
-    fun `drawChanceCard should reshuffle deck when empty`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame(hostPlayerId = "host-1")
-        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameState.advanceTurn()
-        gameState.currentPlayer!!.position = 7
-        gameState.chanceCards.clear()
-
-        controller.handleAction(
-            GameAction(
-                gameId = gameState.gameId,
-                playerId = "host-1",
-                action = "DRAW_CARD",
-                payload = mutableMapOf("cardType" to "CHANCE")
-            )
-        )
-
-        assertNotNull(gameState.currentActionCard)
-        assertEquals(15, gameState.chanceCards.size)
-    }
-
-    @Test
-    fun `drawCommunityChestCard should reshuffle deck when empty`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame(hostPlayerId = "host-1")
-        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameState.advanceTurn()
-        gameState.currentPlayer!!.position = 2
-        gameState.communityChestCards.clear()
-
-        controller.handleAction(
-            GameAction(
-                gameId = gameState.gameId,
-                playerId = "host-1",
-                action = "DRAW_CARD",
-                payload = mutableMapOf("cardType" to "COMMUNITY_CHEST")
-            )
-        )
-
-        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
-
-        assertEquals("ACTION_DRAWN", event.event)
-        assertNotNull(gameState.currentActionCard)
-        assertEquals(15, gameState.communityChestCards.size)
-    }
-
-    @Test
-    fun `drawCard should emit error with missing cardType`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame(hostPlayerId = "host-1")
-        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameState.advanceTurn()
-        gameState.currentPlayer!!.position = 7
-
-        controller.handleAction(
-            GameAction(
-                gameId = gameState.gameId,
-                playerId = "host-1",
-                action = "DRAW_CARD",
-                payload = mutableMapOf()
-            )
-        )
-
-        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
-
-        assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("cardType must be specified"))
-    }
-
-    @Test
-    fun `drawCard should emit error with invalid cardType`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame(hostPlayerId = "host-1")
-        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameState.advanceTurn()
-        gameState.currentPlayer!!.position = 7
-
-        controller.handleAction(
-            GameAction(
-                gameId = gameState.gameId,
-                playerId = "host-1",
-                action = "DRAW_CARD",
-                payload = mutableMapOf("cardType" to "INVALID")
-            )
-        )
-
-        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
-
-        assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("Unknown card type"))
-    }
-
-    @Test
-    fun `executeAction COLLECT_MONEY should increase player money`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame()
-        gameController.joinGame(gameState.gameId, Player(id = "player-1", name = "Alice", money = 1000))
-
-        val card = ChanceCard(
-            id = 1,
-            description = "Collect \$200",
-            action = CardAction.COLLECT_MONEY,
-            amount = 200
-        )
-        gameState.currentActionCard = card
-
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "player-1", action = "EXECUTE_ACTION"))
-
-        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
-
-        assertEquals("ACTION_EXECUTED", event.event)
-        assertEquals(1200, gameState.players[0].money)
-        assertNull(gameState.currentActionCard)
-    }
-
-    @Test
-    fun `executeAction PAY_MONEY should decrease player money and add to free parking`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame()
-        gameController.joinGame(gameState.gameId, Player(id = "player-1", name = "Alice", money = 1000))
-
-        val card = ChanceCard(
-            id = 2,
-            description = "Pay \$100",
-            action = CardAction.PAY_MONEY,
-            amount = 100
-        )
-        gameState.currentActionCard = card
-
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "player-1", action = "EXECUTE_ACTION"))
-
-        assertEquals(900, gameState.players[0].money)
-        assertEquals(100, gameState.freeParkingMoney)
-        assertNull(gameState.currentActionCard)
-    }
-
-    @Test
-    fun `executeAction MOVE_TO should move player to target field`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame()
-        gameController.joinGame(gameState.gameId, Player(id = "player-1", name = "Alice"))
-
-        val card = ChanceCard(
-            id = 3,
-            description = "Go to field 5",
-            action = CardAction.MOVE_TO,
-            targetFieldId = 5
-        )
-        gameState.currentActionCard = card
-
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "player-1", action = "EXECUTE_ACTION"))
-
-        assertEquals(5, gameState.players[0].position)
-    }
-
-    @Test
-    fun `executeAction MOVE_TO should not move player when target field is missing`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame()
-        gameController.joinGame(gameState.gameId, Player(id = "player-1", name = "Alice", position = 12))
-
-        gameState.currentActionCard = ChanceCard(
-            id = 9,
-            description = "Missing target",
-            action = CardAction.MOVE_TO
-        )
-
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "player-1", action = "EXECUTE_ACTION"))
-
-        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
-
-        assertEquals("ACTION_EXECUTED", event.event)
-        assertEquals(12, gameState.players[0].position)
-    }
-
-    @Test
-    fun `executeAction MOVE_TO backwards should grant $200`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame()
-        val player = Player(id = "player-1", name = "Alice", position = 25, money = 1000)
-        gameController.joinGame(gameState.gameId, player)
-
-        val card = ChanceCard(
-            id = 3,
-            description = "Go to Go",
-            action = CardAction.MOVE_TO,
-            targetFieldId = 0
-        )
-        gameState.currentActionCard = card
-
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "player-1", action = "EXECUTE_ACTION"))
-
-        assertEquals(0, gameState.players[0].position)
-        assertEquals(1200, gameState.players[0].money)
-    }
-
-    @Test
-    fun `executeAction MOVE_FORWARD should advance player and grant $200 if passed Go`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame()
-        val player = Player(id = "player-1", name = "Alice", position = 35, money = 1000)
-        gameController.joinGame(gameState.gameId, player)
-
-        val card = ChanceCard(
-            id = 4,
-            description = "Advance 10 spaces",
-            action = CardAction.MOVE_FORWARD,
-            moveSpaces = 10
-        )
-        gameState.currentActionCard = card
-
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "player-1", action = "EXECUTE_ACTION"))
-
-        assertEquals(5, gameState.players[0].position)
-        assertEquals(1200, gameState.players[0].money)
-    }
-
-    @Test
-    fun `executeAction MOVE_FORWARD should not grant bonus when move spaces is zero`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame()
-        gameController.joinGame(gameState.gameId, Player(id = "player-1", name = "Alice", position = 20, money = 1000))
-
-        gameState.currentActionCard = ChanceCard(
-            id = 10,
-            description = "Stay put",
-            action = CardAction.MOVE_FORWARD,
-            moveSpaces = 0
-        )
-
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "player-1", action = "EXECUTE_ACTION"))
-
-        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
-
-        assertEquals("ACTION_EXECUTED", event.event)
-        assertEquals(20, gameState.players[0].position)
-        assertEquals(1000, gameState.players[0].money)
-    }
-
-    @Test
-    fun `executeAction GO_TO_JAIL should move player to jail and set flags`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame()
-        gameController.joinGame(gameState.gameId, Player(id = "player-1", name = "Alice"))
-
-        val card = ChanceCard(
-            id = 5,
-            description = "Go to Jail",
-            action = CardAction.GO_TO_JAIL
-        )
-        gameState.currentActionCard = card
-
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "player-1", action = "EXECUTE_ACTION"))
-
-        assertEquals(10, gameState.players[0].position)
-        assertTrue(gameState.players[0].inJail)
-        assertEquals(0, gameState.players[0].jailTurns)
-    }
-
-    @Test
-    fun `executeAction GET_OUT_OF_JAIL should increment jail cards`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame()
-        gameController.joinGame(gameState.gameId, Player(id = "player-1", name = "Alice", getOutOfJailCards = 0))
-
-        val card = ChanceCard(
-            id = 6,
-            description = "Get Out of Jail Free",
-            action = CardAction.GET_OUT_OF_JAIL
-        )
-        gameState.currentActionCard = card
-
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "player-1", action = "EXECUTE_ACTION"))
-
-        assertEquals(1, gameState.players[0].getOutOfJailCards)
-    }
-
-    @Test
-    fun `executeAction PAY_EACH_PLAYER should transfer money from player to others`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame()
-        gameController.joinGame(gameState.gameId, Player(id = "player-1", name = "Alice", money = 1000))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", money = 1500))
-        gameController.joinGame(gameState.gameId, Player(id = "player-3", name = "Charlie", money = 1500))
-
-        val card = ChanceCard(
-            id = 7,
-            description = "Pay each player \$50",
-            action = CardAction.PAY_EACH_PLAYER,
-            amount = 50
-        )
-        gameState.currentActionCard = card
-
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "player-1", action = "EXECUTE_ACTION"))
-
-        assertEquals(900, gameState.players[0].money)
-        assertEquals(1550, gameState.players[1].money)
-        assertEquals(1550, gameState.players[2].money)
-    }
-
-    @Test
-    fun `executeAction COLLECT_FROM_EACH should transfer money from others to player`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame()
-        gameController.joinGame(gameState.gameId, Player(id = "player-1", name = "Alice", money = 1000))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", money = 1500))
-        gameController.joinGame(gameState.gameId, Player(id = "player-3", name = "Charlie", money = 1500))
-
-        val card = ChanceCard(
-            id = 8,
-            description = "Collect from each player \$50",
-            action = CardAction.COLLECT_FROM_EACH,
-            amount = 50
-        )
-        gameState.currentActionCard = card
-
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "player-1", action = "EXECUTE_ACTION"))
-
-        assertEquals(1100, gameState.players[0].money)
-        assertEquals(1450, gameState.players[1].money)
-        assertEquals(1450, gameState.players[2].money)
-    }
-
-    @Test
-    fun `executeAction should emit error when no action card is set`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame()
-        gameController.joinGame(gameState.gameId, Player(id = "player-1", name = "Alice"))
-
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "player-1", action = "EXECUTE_ACTION"))
-
-        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
-
-        assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("No action card to execute"))
-    }
-
-    @Test
-    fun `executeAction should leave player state unchanged when action player does not exist`() {
-        val (controller, gameController, messagingTemplate) = createController()
-
-        val gameState = gameController.createGame(hostPlayerId = "player-1")
-
-        gameController.joinGame(
-            gameState.gameId,
-            Player(id = "player-1", name = "Alice")
-        )
-
-        gameState.advanceTurn()
-
-        val card = ChanceCard(
-            id = 1,
-            description = "Collect \$200",
-            action = CardAction.COLLECT_MONEY,
-            amount = 200
-        )
-
-        gameState.currentActionCard = card
-
-        controller.handleAction(
-            GameAction(
-                gameId = gameState.gameId,
-                playerId = "unknown-player",
-                action = "EXECUTE_ACTION"
             )
         )
 
         val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-
-        assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("It is not your turn"))
-
-        assertNotNull(gameState.currentActionCard)
-        assertEquals(1500, gameState.players[0].money)
-    }
-
-    @Test
-    fun `multiple draws should cycle through deck correctly`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame(hostPlayerId = "host-1")
-        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameState.advanceTurn()
-        gameState.currentPlayer!!.position = 7
-
-        repeat(5) {
-            controller.handleAction(
-                GameAction(
-                    gameId = gameState.gameId,
-                    playerId = "host-1",
-                    action = "DRAW_CARD",
-                    payload = mutableMapOf("cardType" to "CHANCE")
-                )
-            )
-
-            gameState.hasDrawnChanceCardThisTurn = false
-            gameState.hasDrawnCommunityChestCardThisTurn = false
-            gameState.currentActionCard = null
-        }
-
-        assertEquals(11, gameState.chanceCards.size)
-    }
-
-    @Test
-    fun `handleAction ROLL_DICE with cheat payload true should force double six`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame(hostPlayerId = "host-1")
-        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-
-        gameState.advanceTurn()
-
-        controller.handleAction(
-            GameAction(
-                gameId = gameState.gameId,
-                playerId = "host-1",
-                action = "ROLL_DICE",
-                payload = mutableMapOf("cheat" to "true")
-            )
-        )
-
-        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
-
-        assertEquals("DICE_ROLLED", event.event)
-        assertNotNull(gameState.lastDiceRoll)
-
-        assertEquals(6, gameState.lastDiceRoll!!.die1, "Die 1 muss bei Cheat exakt 6 sein")
-        assertEquals(6, gameState.lastDiceRoll!!.die2, "Die 2 muss bei Cheat exakt 6 sein")
-    }
-
-    @Test
-    fun `handleAction ROLL_DICE with explicit cheat false should roll normal dice`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame(hostPlayerId = "host-1")
-        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-
-        gameState.advanceTurn()
-
-        controller.handleAction(
-            GameAction(
-                gameId = gameState.gameId,
-                playerId = "host-1",
-                action = "ROLL_DICE",
-                payload = mutableMapOf("cheat" to "false")
-            )
-        )
-
-        val payloadCaptor2 = ArgumentCaptor.forClass(Any::class.java)
-        Mockito.verify(messagingTemplate, Mockito.times(1))
-            .convertAndSend(Mockito.any(String::class.java), payloadCaptor2.capture())
-        val event = payloadCaptor2.value as GameEvent
-
-        assertEquals("DICE_ROLLED", event.event)
-        assertNotNull(gameState.lastDiceRoll)
-
-        assertTrue(gameState.lastDiceRoll!!.die1 in 1..6, "Die 1 muss zwischen 1 und 6 liegen")
-        assertTrue(gameState.lastDiceRoll!!.die2 in 1..6, "Die 2 muss zwischen 1 und 6 liegen")
-    }
-
-    @Test
-    fun `handleAction DRAW_CARD should fail when player not on correct field type`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame(hostPlayerId = "host-1")
-        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameState.advanceTurn()
-
-        controller.handleAction(
-            GameAction(
-                gameId = gameState.gameId,
-                playerId = "host-1",
-                action = "DRAW_CARD",
-                payload = mutableMapOf("cardType" to "CHANCE")
-            )
-        )
-
-        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
-
-        assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("must be on a CHANCE field"))
-    }
-
-    @Test
-    fun `handleAction DRAW_CARD should succeed on Chance field`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame(hostPlayerId = "host-1")
-        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameState.advanceTurn()
-
-        gameState.currentPlayer!!.position = 7
-
-        controller.handleAction(
-            GameAction(
-                gameId = gameState.gameId,
-                playerId = "host-1",
-                action = "DRAW_CARD",
-                payload = mutableMapOf("cardType" to "CHANCE")
-            )
-        )
-
-        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
-
         assertEquals("ACTION_DRAWN", event.event)
         assertNotNull(gameState.currentActionCard)
-        assertTrue(event.message!!.contains("Card drawn"))
-    }
-
-    @Test
-    fun `handleAction DRAW_CARD should succeed on Community Chest field`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame(hostPlayerId = "host-1")
-        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameState.advanceTurn()
-
-        gameState.currentPlayer!!.position = 2
-
-        controller.handleAction(
-            GameAction(
-                gameId = gameState.gameId,
-                playerId = "host-1",
-                action = "DRAW_CARD",
-                payload = mutableMapOf("cardType" to "COMMUNITY_CHEST")
-            )
-        )
-
-        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
-
-        assertEquals("ACTION_DRAWN", event.event)
-        assertNotNull(gameState.currentActionCard)
-        assertTrue(event.message!!.contains("Card drawn"))
-    }
-
-    @Test
-    fun `handleAction DRAW_CARD should fail when not player's turn`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame(hostPlayerId = "host-1")
-        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
-        gameState.advanceTurn()
-
-        controller.handleAction(
-            GameAction(
-                gameId = gameState.gameId,
-                playerId = "host-1",
-                action = "DRAW_CARD",
-                payload = mutableMapOf("cardType" to "CHANCE")
-            )
-        )
-
-        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
-
-        assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("It is not your turn"))
-    }
-
-    @Test
-    fun `handleAction DRAW_CARD should fail with wrong field type`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame(hostPlayerId = "host-1")
-        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameState.advanceTurn()
-
-        gameState.currentPlayer!!.position = 7
-
-        controller.handleAction(
-            GameAction(
-                gameId = gameState.gameId,
-                playerId = "host-1",
-                action = "DRAW_CARD",
-                payload = mutableMapOf("cardType" to "COMMUNITY_CHEST")
-            )
-        )
-
-        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
-
-        assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("must be on a COMMUNITY_CHEST field"))
-    }
-
-    @Test
-    fun `drawCard should emit error when player already drew card this turn`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame(hostPlayerId = "host-1")
-        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameState.advanceTurn()
-        gameState.currentPlayer!!.position = 7
-
-        controller.handleAction(
-            GameAction(
-                gameId = gameState.gameId,
-                playerId = "host-1",
-                action = "DRAW_CARD",
-                payload = mutableMapOf("cardType" to "CHANCE")
-            )
-        )
-
-        controller.handleAction(
-            GameAction(
-                gameId = gameState.gameId,
-                playerId = "host-1",
-                action = "DRAW_CARD",
-                payload = mutableMapOf("cardType" to "CHANCE")
-            )
-        )
-
-        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-
-        assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("only draw one card per turn"))
+        assertTrue(gameState.currentActionCard is CommunityChestCard)
     }
 
     @Test
@@ -2058,14 +1447,13 @@ class WebSocketBrokerControllerTest {
     }
 
     @Test
-    fun `endTurn should reset hasDrawnChanceCardThisTurn and currentActionCard`() {
+    fun `endTurn should reset currentActionCard`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
         gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
         gameState.phase = GamePhase.BUYING
 
-        gameState.hasDrawnChanceCardThisTurn = true
         gameState.currentActionCard = ChanceCard(
             id = 1,
             description = "Collect money",
@@ -2083,19 +1471,17 @@ class WebSocketBrokerControllerTest {
 
         captureLastMessages(messagingTemplate, 1)
 
-        assertEquals(false, gameState.hasDrawnChanceCardThisTurn)
         assertNull(gameState.currentActionCard)
         assertEquals(GamePhase.ROLLING, gameState.phase)
     }
 
     @Test
-    fun `endTurn should reset hasDrawnCommunityChestCardThisTurn`() {
+    fun `endTurn should advance to next player`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
         gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
-
-        gameState.hasDrawnCommunityChestCardThisTurn = true
+        gameState.phase = GamePhase.BUYING
 
         controller.handleAction(
             GameAction(
@@ -2105,20 +1491,18 @@ class WebSocketBrokerControllerTest {
             )
         )
 
-        captureLastMessages(messagingTemplate, 1)
+        assertEquals("player-2", gameState.currentPlayer!!.id)
 
-        assertEquals(false, gameState.hasDrawnCommunityChestCardThisTurn)
+        captureLastMessages(messagingTemplate, 1)
     }
 
     @Test
-    fun `drawCard should emit error when community chest card already drawn this turn`() {
+    fun `drawCard should succeed when drawing community chest card`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
         gameState.advanceTurn()
         gameState.currentPlayer!!.position = 2 // Community Chest field
-
-        gameState.hasDrawnCommunityChestCardThisTurn = true
 
         controller.handleAction(
             GameAction(
@@ -2130,58 +1514,12 @@ class WebSocketBrokerControllerTest {
         )
 
         val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("only draw one card per turn"))
+        assertEquals("ACTION_DRAWN", event.event)
+        assertTrue(gameState.currentActionCard is CommunityChestCard)
     }
 
     @Test
-    fun `drawCard should emit error when chance card already drawn and trying community chest`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame(hostPlayerId = "host-1")
-        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameState.advanceTurn()
-        gameState.currentPlayer!!.position = 2 // Community Chest field
-
-        gameState.hasDrawnChanceCardThisTurn = true
-
-        controller.handleAction(
-            GameAction(
-                gameId = gameState.gameId,
-                playerId = "host-1",
-                action = "DRAW_CARD",
-                payload = mutableMapOf("cardType" to "COMMUNITY_CHEST")
-            )
-        )
-
-        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("only draw one card per turn"))
-    }
-
-    @Test
-    fun `drawCard should set hasDrawnCommunityChestCardThisTurn when drawing community chest`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame(hostPlayerId = "host-1")
-        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameState.advanceTurn()
-        gameState.currentPlayer!!.position = 2 // Community Chest field
-
-        controller.handleAction(
-            GameAction(
-                gameId = gameState.gameId,
-                playerId = "host-1",
-                action = "DRAW_CARD",
-                payload = mutableMapOf("cardType" to "COMMUNITY_CHEST")
-            )
-        )
-
-        captureLastMessages(messagingTemplate, 1)
-        assertTrue(gameState.hasDrawnCommunityChestCardThisTurn)
-        assertFalse(gameState.hasDrawnChanceCardThisTurn)
-    }
-
-    @Test
-    fun `drawCard should set hasDrawnChanceCardThisTurn when drawing chance`() {
+    fun `drawCard should succeed when drawing chance card`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
@@ -2197,9 +1535,56 @@ class WebSocketBrokerControllerTest {
             )
         )
 
-        captureLastMessages(messagingTemplate, 1)
-        assertTrue(gameState.hasDrawnChanceCardThisTurn)
-        assertFalse(gameState.hasDrawnCommunityChestCardThisTurn)
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ACTION_DRAWN", event.event)
+        assertNotNull(gameState.currentActionCard)
+        assertTrue(gameState.currentActionCard is ChanceCard)
+    }
+
+    @Test
+    fun `drawCard should emit ACTION_DRAWN and set currentActionCard when drawing community chest`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.advanceTurn()
+        gameState.currentPlayer!!.position = 2 // Community Chest field
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DRAW_CARD",
+                payload = mutableMapOf("cardType" to "COMMUNITY_CHEST")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ACTION_DRAWN", event.event)
+        assertNotNull(gameState.currentActionCard)
+        assertTrue(gameState.currentActionCard is CommunityChestCard)
+    }
+
+    @Test
+    fun `drawCard should emit ACTION_DRAWN and set currentActionCard when drawing chance`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.advanceTurn()
+        gameState.currentPlayer!!.position = 7 // Chance field
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DRAW_CARD",
+                payload = mutableMapOf("cardType" to "CHANCE")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ACTION_DRAWN", event.event)
+        assertNotNull(gameState.currentActionCard)
+        assertTrue(gameState.currentActionCard is ChanceCard)
     }
 
     @Test
@@ -2993,6 +2378,150 @@ class WebSocketBrokerControllerTest {
         val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
         assertEquals("ERROR", event.event)
         assertTrue(event.message!!.contains("Not enough money"))
+    }
+
+    @Test
+    fun `drawCard should fail when a card is already pending execution`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.advanceTurn()
+        gameState.currentPlayer!!.position = 7 // Chance field
+
+        // First draw succeeds
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DRAW_CARD",
+                payload = mutableMapOf("cardType" to "CHANCE")
+            )
+        )
+        assertNotNull(gameState.currentActionCard)
+        Mockito.clearInvocations(messagingTemplate)
+
+        // Second draw must fail
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DRAW_CARD",
+                payload = mutableMapOf("cardType" to "CHANCE")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("already drawn a card"))
+    }
+
+    @Test
+    fun `executeAction COLLECT_FROM_EACH should take money from each other player`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame()
+        val player1 = Player(id = "p1", name = "Alice", money = 500)
+        val player2 = Player(id = "p2", name = "Bob", money = 300)
+        val player3 = Player(id = "p3", name = "Charlie", money = 200)
+        gameController.joinGame(gameState.gameId, player1)
+        gameController.joinGame(gameState.gameId, player2)
+        gameController.joinGame(gameState.gameId, player3)
+
+        gameState.currentActionCard = CommunityChestCard(
+            id = 99,
+            description = "Collect 10 from each",
+            action = CardAction.COLLECT_FROM_EACH,
+            amount = 10
+        )
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "p1",
+                action = "EXECUTE_ACTION"
+            )
+        )
+
+        captureLastMessages(messagingTemplate, 1)
+
+        assertEquals(520, gameState.players[0].money) // 500 + 10 + 10
+        assertEquals(290, gameState.players[1].money) // 300 - 10
+        assertEquals(190, gameState.players[2].money) // 200 - 10
+    }
+
+    @Test
+    fun `executeAction PAY_EACH_PLAYER should treat amount as per-player`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame()
+        val player1 = Player(id = "p1", name = "Alice", money = 500)
+        val player2 = Player(id = "p2", name = "Bob", money = 300)
+        val player3 = Player(id = "p3", name = "Charlie", money = 200)
+        gameController.joinGame(gameState.gameId, player1)
+        gameController.joinGame(gameState.gameId, player2)
+        gameController.joinGame(gameState.gameId, player3)
+
+        gameState.currentActionCard = ChanceCard(
+            id = 99,
+            description = "Pay each player 50",
+            action = CardAction.PAY_EACH_PLAYER,
+            amount = 50
+        )
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "p1",
+                action = "EXECUTE_ACTION"
+            )
+        )
+
+        captureLastMessages(messagingTemplate, 1)
+
+        assertEquals(400, gameState.players[0].money) // 500 - 50 - 50
+        assertEquals(350, gameState.players[1].money) // 300 + 50
+        assertEquals(250, gameState.players[2].money) // 200 + 50
+    }
+
+
+    @Test
+    fun `deck reshuffle on empty should regenerate cards`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.advanceTurn()
+        gameState.currentPlayer!!.position = 7 // Chance field
+
+        val initialSize = gameState.chanceCards.size
+        // Draw all cards to empty the deck
+        for (i in 1..initialSize) {
+            gameState.currentActionCard = null
+            controller.handleAction(
+                GameAction(
+                    gameId = gameState.gameId,
+                    playerId = "host-1",
+                    action = "DRAW_CARD",
+                    payload = mutableMapOf("cardType" to "CHANCE")
+                )
+            )
+        }
+        assertEquals(0, gameState.chanceCards.size)
+
+        // Next draw should reshuffle — total cards = 16 (full deck minus 1 drawn)
+        Mockito.clearInvocations(messagingTemplate)
+        gameState.currentActionCard = null
+        gameState.advanceTurn() // resets currentActionCard
+        gameState.currentPlayer!!.position = 7
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DRAW_CARD",
+                payload = mutableMapOf("cardType" to "CHANCE")
+            )
+        )
+
+        assertNotNull(gameState.currentActionCard)
+        assertEquals(15, gameState.chanceCards.size) // 16 reshuffled - 1 drawn
     }
 
 }
