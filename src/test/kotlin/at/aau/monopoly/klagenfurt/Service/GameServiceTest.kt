@@ -1,4 +1,4 @@
-package at.aau.monopoly.klagenfurt.Service
+package at.aau.monopoly.klagenfurt.service
 
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Test

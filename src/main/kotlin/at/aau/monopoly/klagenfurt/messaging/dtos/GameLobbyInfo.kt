@@ -9,6 +9,7 @@ import at.aau.monopoly.klagenfurt.model.enums.GamePhase
 data class GameLobbyInfo(
     val gameId: String = "",
     val hostPlayerName: String = "",
+    val hostPlayerId: String = "",
     val playerCount: Int = 0,
     val maxPlayers: Int = 5,
     val phase: GamePhase = GamePhase.WAITING,

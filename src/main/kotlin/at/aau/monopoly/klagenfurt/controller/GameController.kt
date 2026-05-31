@@ -102,9 +102,6 @@ class GameController {
         require(gameState.hostPlayerId == playerId) {
             "Only the host can close the game."
         }
-        require(gameState.phase == GamePhase.WAITING) {
-            "Cannot close a game that has already started."
-    }
         games.remove(gameId)
         return gameState
     }
@@ -126,6 +123,7 @@ class GameController {
                 GameLobbyInfo(
                     gameId = game.gameId,
                     hostPlayerName = hostName,
+                    hostPlayerId = game.hostPlayerId,
                     playerCount = game.players.size,
                     maxPlayers = maxPlayersPerGame,
                     phase = game.phase,
