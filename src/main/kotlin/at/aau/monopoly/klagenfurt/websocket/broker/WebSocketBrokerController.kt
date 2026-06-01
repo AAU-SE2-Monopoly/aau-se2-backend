@@ -456,6 +456,11 @@ class WebSocketBrokerController(
         action: GameAction,
         gameState: GameState
     ) {
+        if (gameState.phase == GamePhase.PAYING_RENT) {
+            sendGameError(action, gameState, "Cannot buy houses while rent is due.")
+            return
+        }
+
         val property = getValidatedProperty(action, gameState) ?: return
         val player = gameState.currentPlayer!!
 
@@ -509,6 +514,11 @@ class WebSocketBrokerController(
         action: GameAction,
         gameState: GameState
     ) {
+        if (gameState.phase == GamePhase.PAYING_RENT) {
+            sendGameError(action, gameState, "Cannot buy hotels while rent is due.")
+            return
+        }
+
         val property = getValidatedProperty(action, gameState) ?: return
         val player = gameState.currentPlayer!!
 
@@ -1006,7 +1016,10 @@ class WebSocketBrokerController(
     ) {
         if (!validateCurrentPlayerTurn(action, gameState)) return
 
-
+        if (gameState.phase == GamePhase.PAYING_RENT) {
+            sendGameError(action, gameState, "Cannot buy property while rent is due.")
+            return
+        }
 
         if (gameState.phase != GamePhase.BUYING) {
             sendGameError(action, gameState, "Property can only be bought during the buying phase.")
@@ -1235,6 +1248,11 @@ class WebSocketBrokerController(
         gameState: GameState
     ) {
         if (!validateCurrentPlayerTurn(action, gameState)) return
+
+        if (gameState.phase == GamePhase.PAYING_RENT) {
+            sendGameError(action, gameState, "Cannot unmortgage while rent is due.")
+            return
+        }
 
         val player = gameState.currentPlayer!!
         val fieldId = action.payload["fieldId"]?.toIntOrNull() ?: return
