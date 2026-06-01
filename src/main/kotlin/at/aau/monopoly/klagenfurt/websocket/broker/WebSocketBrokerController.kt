@@ -1279,6 +1279,13 @@ class WebSocketBrokerController(
         }
 
         val player = gameState.currentPlayer!!
+
+        if (PaymentService.canPayAfterAssets(player, gameState.fields, pending.amount)) {
+            sendGameError(action, gameState,
+                "You can still pay by mortgaging properties or selling buildings. Declare bankruptcy only if your total assets are insufficient.")
+            return
+        }
+
         val creditorId = pending.creditorPlayerId
         val ownedFields = gameState.fields.filterIsInstance<OwnableField>()
             .filter { it.ownerId == player.id }
