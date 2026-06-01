@@ -44,10 +44,10 @@ data class GameState(
             do {
                 currentPlayerIndex = (currentPlayerIndex + 1) % players.size
                 attempts++
-            } while (attempts < players.size && players[currentPlayerIndex].isBankrupt())
+            } while (attempts < players.size && (players[currentPlayerIndex].isBankrupt() || players[currentPlayerIndex].eliminated))
 
-            if (players[currentPlayerIndex].isBankrupt()) {
-                // All players are bankrupt; do not advance phase
+            if (players.all { it.isBankrupt() || it.eliminated }) {
+                phase = GamePhase.FINISHED
                 return
             }
         }
@@ -64,5 +64,5 @@ data class GameState(
     }
 
     /** Returns true when only one player has money / properties remaining. */
-    fun isGameOver(): Boolean = players.count { !it.isBankrupt() } <= 1
+    fun isGameOver(): Boolean = players.count { !it.isBankrupt() && !it.eliminated } <= 1
 }

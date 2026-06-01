@@ -1089,7 +1089,7 @@ class WebSocketBrokerController(
             val ownerId = landedField.ownerId
             if (ownerId != null && ownerId != player.id && !landedField.isMortgaged) {
                 val owner = gameState.players.find { it.id == ownerId }
-                if (owner != null && !owner.isBankrupt()) {
+                if (owner != null && !owner.eliminated) {
                     val rent = when (landedField) {
                         is PropertyField -> RentCalculator.calculatePropertyRent(landedField, gameState.fields, ownerId)
                         is RailroadField -> RentCalculator.calculateRailroadRent(landedField, gameState.fields, ownerId)
@@ -1327,6 +1327,7 @@ class WebSocketBrokerController(
             player.getOutOfJailCards = 0
         }
 
+        player.eliminated = true
         gameState.phase = GamePhase.TURN_END
         gameState.pendingPayment = null
         gameState.bankruptcyTotalAssets = totalAssetValue

@@ -254,8 +254,8 @@ class GameStateTest {
 
         gameState.advanceTurn()
 
-        // Phase and index should remain unchanged since all players are bankrupt
+        // Phase should be FINISHED since all players are bankrupt
         assertEquals(0, gameState.currentPlayerIndex)
-        assertEquals(GamePhase.BUYING, gameState.phase)
+        assertEquals(GamePhase.FINISHED, gameState.phase)
     }
 }
