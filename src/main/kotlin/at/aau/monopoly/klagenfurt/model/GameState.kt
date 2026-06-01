@@ -12,7 +12,8 @@ data class PendingPayment(
     val amount: Int,
     val source: PaymentSource,
     val sourceFieldId: Int? = null,
-    val creditorPlayerId: String? = null
+    val creditorPlayerId: String? = null,
+    val debtorCanPayAfterAssets: Boolean = true
 )
 
 data class GameState(

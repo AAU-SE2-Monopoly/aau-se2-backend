@@ -589,6 +589,8 @@ class WebSocketBrokerController(
         property.houses -= 1
         player.money += property.houseCost / 2
 
+        recomputeCanPayAfterAssets(gameState)
+
         sendGameEvent(
             action,
             gameState,
@@ -617,6 +619,8 @@ class WebSocketBrokerController(
         property.hasHotel = false
         property.houses = 4
         player.money += property.hotelCost / 2
+
+        recomputeCanPayAfterAssets(gameState)
 
         sendGameEvent(
             action,
@@ -1121,7 +1125,8 @@ class WebSocketBrokerController(
                             amount = rent,
                             source = PaymentSource.RENT,
                             sourceFieldId = landedField.id,
-                            creditorPlayerId = ownerId
+                            creditorPlayerId = ownerId,
+                            debtorCanPayAfterAssets = PaymentService.canPayAfterAssets(player, gameState.fields, rent)
                         )
                         messagingTemplate.convertAndSend(
                             "/topic/game/${action.gameId}",
@@ -1140,6 +1145,14 @@ class WebSocketBrokerController(
                 GameEvent(gameId = action.gameId, event = GameEvent.FREE_PARKING_COLLECTED, gameState = gameState)
             )
         }
+    }
+
+    private fun recomputeCanPayAfterAssets(gameState: GameState) {
+        val pending = gameState.pendingPayment ?: return
+        val player = gameState.currentPlayer ?: return
+        gameState.pendingPayment = pending.copy(
+            debtorCanPayAfterAssets = PaymentService.canPayAfterAssets(player, gameState.fields, pending.amount)
+        )
     }
 
     private fun handlePayRent(
@@ -1192,7 +1205,7 @@ class WebSocketBrokerController(
                     sendGameError(action, gameState, "Creditor not found or bankrupt.")
                     return
                 }
-                if (!PaymentService.canPayAfterAssets(player, gameState.fields, pending.amount)) {
+                if (player.money < pending.amount) {
                     sendPaymentFailed(action, gameState, pending.amount)
                     return
                 }
@@ -1244,6 +1257,7 @@ class WebSocketBrokerController(
 
         if (field is OwnableField && field.ownerId == player.id && !field.isMortgaged && !hasBuildings) {
             PaymentService.mortgageProperty(player, field)
+            recomputeCanPayAfterAssets(gameState)
             messagingTemplate.convertAndSend(
                 "/topic/game/${action.gameId}",
                 GameEvent(gameId = action.gameId, event = GameEvent.PROPERTY_MORTGAGED, gameState = gameState)
