@@ -711,7 +711,7 @@ class WebSocketBrokerController(
         val player = gameState.currentPlayer
         val isDoublet = gameState.lastDiceRoll?.isDouble == true
 
-        if (player != null && isDoublet && !player.inJail && player.consecutiveDoublets > 0) {
+        if (player != null && isDoublet && !player.isBankrupt() && !player.inJail && player.consecutiveDoublets > 0) {
             gameState.endCurrentTurn()
             gameState.phase = GamePhase.ROLLING
             sendGameEvent(
@@ -1164,6 +1164,10 @@ class WebSocketBrokerController(
         }
 
         val player = gameState.currentPlayer!!
+        if (player.isBankrupt()) {
+            sendGameError(action, gameState, "You are bankrupt and cannot pay rent.")
+            return
+        }
         val fieldId = action.payload["fieldId"]?.toIntOrNull()
 
         // If the pending payment has a sourceFieldId, validate that it matches the payload
@@ -1230,6 +1234,10 @@ class WebSocketBrokerController(
         if (!validateCurrentPlayerTurn(action, gameState)) return
 
         val player = gameState.currentPlayer!!
+        if (player.isBankrupt()) {
+            sendGameError(action, gameState, "You are bankrupt and cannot mortgage properties.")
+            return
+        }
         val fieldId = action.payload["fieldId"]?.toIntOrNull() ?: return
         val field = gameState.fields.find { it.id == fieldId }
         val hasBuildings = field is PropertyField && (field.houses > 0 || field.hasHotel)
@@ -1257,6 +1265,10 @@ class WebSocketBrokerController(
         }
 
         val player = gameState.currentPlayer!!
+        if (player.isBankrupt()) {
+            sendGameError(action, gameState, "You are bankrupt and cannot unmortgage properties.")
+            return
+        }
         val fieldId = action.payload["fieldId"]?.toIntOrNull() ?: return
         val field = gameState.fields.find { it.id == fieldId }
 
@@ -1376,7 +1388,7 @@ class WebSocketBrokerController(
         }
 
         player.eliminated = true
-        gameState.phase = GamePhase.TURN_END
+        gameState.endCurrentTurn()
         gameState.pendingPayment = null
         gameState.bankruptcyTotalAssets = totalAssetValue
         gameState.bankruptcyTotalDebt = totalDebt

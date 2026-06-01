@@ -15,7 +15,7 @@ object PaymentService {
             is PropertyField -> field.price
             is RailroadField -> field.price
             is UtilityField -> field.price
-            else -> 0
+            else -> error("Unsupported OwnableField type: ${field::class.simpleName}")
         }
         field.isMortgaged = true
         player.money += price / 2
@@ -27,7 +27,7 @@ object PaymentService {
             is PropertyField -> field.price
             is RailroadField -> field.price
             is UtilityField -> field.price
-            else -> 0
+            else -> error("Unsupported OwnableField type: ${field::class.simpleName}")
         }
         // 10% interest, rounded up
         val cost = ceil(price / 2.0 * 1.1).toInt()
