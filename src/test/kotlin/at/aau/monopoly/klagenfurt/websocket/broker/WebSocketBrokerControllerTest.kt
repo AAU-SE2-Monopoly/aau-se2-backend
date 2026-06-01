@@ -3201,4 +3201,269 @@ class WebSocketBrokerControllerTest {
         assertEquals("ERROR", event.event)
         assertTrue(event.message!!.contains("Sell all houses"))
     }
+
+    @Test
+    fun `MORTGAGE rejects when sibling in color set has houses`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 500))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.BUYING
+        gameState.players[0].ownedPropertyIds.addAll(listOf(1, 3))
+        val prop1 = gameState.fields[1] as PropertyField
+        prop1.ownerId = "host-1"
+        val prop3 = gameState.fields[3] as PropertyField
+        prop3.ownerId = "host-1"
+        prop3.houses = 2
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "MORTGAGE_PROPERTY",
+            payload = mutableMapOf("fieldId" to "1")))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("color set"))
+    }
+
+    @Test
+    fun `MORTGAGE rejects when sibling in color set has hotel`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 500))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.BUYING
+        gameState.players[0].ownedPropertyIds.addAll(listOf(1, 3))
+        val prop1 = gameState.fields[1] as PropertyField
+        prop1.ownerId = "host-1"
+        val prop3 = gameState.fields[3] as PropertyField
+        prop3.ownerId = "host-1"
+        prop3.hasHotel = true
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "MORTGAGE_PROPERTY",
+            payload = mutableMapOf("fieldId" to "1")))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("color set"))
+    }
+
+    @Test
+    fun `BUY_HOUSE rejects when color set has mortgaged property`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 500))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.BUYING
+        gameState.players[0].ownedPropertyIds.addAll(listOf(1, 3))
+        val prop1 = gameState.fields[1] as PropertyField
+        prop1.ownerId = "host-1"
+        val prop3 = gameState.fields[3] as PropertyField
+        prop3.ownerId = "host-1"
+        prop3.isMortgaged = true
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "BUY_HOUSE",
+            payload = mutableMapOf("fieldId" to "1")))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("mortgaged"))
+    }
+
+    @Test
+    fun `BUY_HOTEL rejects when color set has mortgaged property`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1000))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.BUYING
+        gameState.players[0].ownedPropertyIds.addAll(listOf(1, 3))
+        val prop1 = gameState.fields[1] as PropertyField
+        prop1.ownerId = "host-1"
+        prop1.houses = 4
+        val prop3 = gameState.fields[3] as PropertyField
+        prop3.ownerId = "host-1"
+        prop3.houses = 4
+        prop3.isMortgaged = true
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "BUY_HOTEL",
+            payload = mutableMapOf("fieldId" to "1")))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("mortgaged"))
+    }
+
+    @Test
+    fun `PAY_JAIL_FINE resets consecutiveDoublets`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        val player = gameState.players[0]
+        player.inJail = true
+        player.position = 10
+        player.money = 100
+        player.consecutiveDoublets = 2
+        gameState.advanceTurn()
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "PAY_JAIL_FINE"))
+
+        assertEquals(0, player.consecutiveDoublets)
+        assertEquals(false, player.inJail)
+    }
+
+    @Test
+    fun `USE_JAIL_CARD resets consecutiveDoublets`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        val player = gameState.players[0]
+        player.inJail = true
+        player.position = 10
+        player.consecutiveDoublets = 2
+        player.getOutOfJailCards = 1
+        gameState.advanceTurn()
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "USE_JAIL_CARD"))
+
+        assertEquals(0, player.consecutiveDoublets)
+        assertEquals(false, player.inJail)
+    }
+
+    @Test
+    fun `forced jail payment on 3rd failed roll resets consecutiveDoublets`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 200))
+        val player = gameState.players[0]
+
+        var attempts = 0
+        while (true) {
+            player.inJail = true
+            player.position = 10
+            player.jailTurns = 2
+            player.consecutiveDoublets = 2
+            gameState.phase = GamePhase.ROLLING
+            gameState.currentPlayerIndex = 0
+
+            controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "ROLL_DICE"))
+            if (!gameState.lastDiceRoll!!.isDouble) {
+                assertEquals(false, player.inJail)
+                assertEquals(0, player.jailTurns)
+                assertEquals(0, player.consecutiveDoublets)
+                break
+            }
+            attempts++
+            if (attempts > 50) org.junit.jupiter.api.Assertions.fail<Unit>("Could not roll a non-doublet in 50 attempts")
+        }
+    }
+
+    @Test
+    fun `forced jail payment with insufficient money sets money to zero`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 20))
+        val player = gameState.players[0]
+
+        var attempts = 0
+        while (true) {
+            player.inJail = true
+            player.position = 10
+            player.jailTurns = 2
+            player.money = 20
+            gameState.phase = GamePhase.ROLLING
+            gameState.currentPlayerIndex = 0
+
+            controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "ROLL_DICE"))
+            if (!gameState.lastDiceRoll!!.isDouble) {
+                assertEquals(false, player.inJail)
+                assertEquals(0, player.jailTurns)
+                assertEquals(0, player.money)
+                break
+            }
+            attempts++
+            if (attempts > 50) org.junit.jupiter.api.Assertions.fail<Unit>("Could not roll a non-doublet in 50 attempts")
+        }
+    }
+
+    @Test
+    fun `USE_JAIL_CARD returns card to deck`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        val player = gameState.players[0]
+        player.inJail = true
+        player.position = 10
+        player.getOutOfJailCards = 1
+        gameState.advanceTurn()
+
+        val chanceBefore = gameState.chanceCards.size
+        val communityBefore = gameState.communityChestCards.size
+        val totalBefore = chanceBefore + communityBefore
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "USE_JAIL_CARD"))
+
+        assertEquals(0, player.getOutOfJailCards)
+        val totalAfter = gameState.chanceCards.size + gameState.communityChestCards.size
+        assertEquals(totalBefore + 1, totalAfter)
+    }
+
+    @Test
+    fun `bank bankruptcy cancels mortgages on seized properties`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 10))
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(amount = 100, source = PaymentSource.RENT, sourceFieldId = 1,
+            creditorPlayerId = null)
+        gameState.currentPlayerIndex = 0
+        val prop = gameState.fields[1] as PropertyField
+        prop.ownerId = "host-1"
+        prop.isMortgaged = true
+        gameState.players[0].ownedPropertyIds.add(1)
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "DECLARE_BANKRUPTCY"))
+
+        assertNull(prop.ownerId)
+        assertFalse(prop.isMortgaged)
+    }
+
+    @Test
+    fun `bank bankruptcy cancels mortgages on seized properties when creditor also bankrupt`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 10))
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(amount = 100, source = PaymentSource.RENT, sourceFieldId = 1,
+            creditorPlayerId = "creditor-1")
+        gameState.currentPlayerIndex = 0
+        val prop = gameState.fields[1] as PropertyField
+        prop.ownerId = "host-1"
+        prop.isMortgaged = true
+        gameState.players[0].ownedPropertyIds.add(1)
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "DECLARE_BANKRUPTCY"))
+
+        assertNull(prop.ownerId)
+        assertFalse(prop.isMortgaged)
+    }
+
+    @Test
+    fun `BUY_HOUSE succeeds when all same-color properties owned and no mortgages`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 500))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.BUYING
+        gameState.players[0].ownedPropertyIds.addAll(listOf(1, 3))
+        val prop1 = gameState.fields[1] as PropertyField
+        prop1.ownerId = "host-1"
+        val prop3 = gameState.fields[3] as PropertyField
+        prop3.ownerId = "host-1"
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "BUY_HOUSE",
+            payload = mutableMapOf("fieldId" to "1")))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("HOUSE_BOUGHT", event.event)
+        assertEquals(1, prop1.houses)
+    }
 }

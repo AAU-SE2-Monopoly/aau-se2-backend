@@ -7,6 +7,8 @@ import at.aau.monopoly.klagenfurt.messaging.dtos.LobbyEvent
 import at.aau.monopoly.klagenfurt.model.DiceRoll
 import at.aau.monopoly.klagenfurt.model.Player
 import at.aau.monopoly.klagenfurt.model.card.Card
+import at.aau.monopoly.klagenfurt.model.card.ChanceCard
+import at.aau.monopoly.klagenfurt.model.card.CommunityChestCard
 import at.aau.monopoly.klagenfurt.model.enums.CardAction
 import at.aau.monopoly.klagenfurt.model.enums.GamePhase
 import at.aau.monopoly.klagenfurt.model.field.ChanceField
@@ -169,6 +171,7 @@ class WebSocketBrokerController(
                     player.money -= 50
                     player.inJail = false
                     player.jailTurns = 0
+                    player.consecutiveDoublets = 0
                     messagingTemplate.convertAndSend(
                         "/topic/game/${action.gameId}",
                         GameEvent(
@@ -194,6 +197,8 @@ class WebSocketBrokerController(
                     player.getOutOfJailCards -= 1
                     player.inJail = false
                     player.jailTurns = 0
+                    player.consecutiveDoublets = 0
+                    returnJailCardToDeck(gameState)
                     messagingTemplate.convertAndSend(
                         "/topic/game/${action.gameId}",
                         GameEvent(
@@ -374,6 +379,15 @@ class WebSocketBrokerController(
         return gameState.communityChestCards.removeAt(0)
     }
 
+    private fun returnJailCardToDeck(gameState: GameState) {
+        val goojfCardId = 999
+        if (gameState.chanceCards.size <= gameState.communityChestCards.size) {
+            gameState.chanceCards.add(ChanceCard(id = goojfCardId, description = "Get Out of Jail Free", action = CardAction.GET_OUT_OF_JAIL))
+        } else {
+            gameState.communityChestCards.add(CommunityChestCard(id = goojfCardId, description = "Get Out of Jail Free", action = CardAction.GET_OUT_OF_JAIL))
+        }
+    }
+
     /**
      * Execute a card action: transfer money, move player, etc.
      */
@@ -479,6 +493,11 @@ class WebSocketBrokerController(
             return
         }
 
+        if (!isColorSetMortgageFree(gameState, property)) {
+            sendGameError(action, gameState, "Cannot build while any property in the color set is mortgaged.")
+            return
+        }
+
         if (property.hasHotel) {
             sendGameError(action, gameState, "This property already has a hotel.")
             return
@@ -529,6 +548,11 @@ class WebSocketBrokerController(
 
         if (!ownsCompleteColorSet(gameState, player.id, property)) {
             sendGameError(action, gameState, "You need the complete color set to build a hotel.")
+            return
+        }
+
+        if (!isColorSetMortgageFree(gameState, property)) {
+            sendGameError(action, gameState, "Cannot build while any property in the color set is mortgaged.")
             return
         }
 
@@ -666,6 +690,16 @@ class WebSocketBrokerController(
         val minHouses = colorSet.minOf { it.houses }
 
         return property.houses == minHouses
+    }
+
+    private fun isColorSetMortgageFree(
+        gameState: GameState,
+        property: PropertyField
+    ): Boolean {
+        return gameState.fields
+            .filterIsInstance<PropertyField>()
+            .filter { it.color == property.color }
+            .none { it.isMortgaged }
     }
 
     private fun sendGameError(
@@ -929,7 +963,12 @@ class WebSocketBrokerController(
             player.jailTurns++
 
             if (player.jailTurns >= 3) {
-                player.money -= 50
+                if (player.money >= 50) {
+                    player.money -= 50
+                } else {
+                    player.money = 0
+                }
+                player.consecutiveDoublets = 0
                 player.inJail = false
                 player.jailTurns = 0
                 eventMessage += " Failed 3rd attempt. Paid 50M to get out!"
@@ -1254,8 +1293,12 @@ class WebSocketBrokerController(
         val fieldId = action.payload["fieldId"]?.toIntOrNull() ?: return
         val field = gameState.fields.find { it.id == fieldId }
         val hasBuildings = field is PropertyField && (field.houses > 0 || field.hasHotel)
+        val colorGroup = (field as? PropertyField)?.color
+        val siblingHasBuildings = colorGroup != null && gameState.fields
+            .filterIsInstance<PropertyField>()
+            .any { it.color == colorGroup && it.id != field.id && it.ownerId == player.id && (it.houses > 0 || it.hasHotel) }
 
-        if (field is OwnableField && field.ownerId == player.id && !field.isMortgaged && !hasBuildings) {
+        if (field is OwnableField && field.ownerId == player.id && !field.isMortgaged && !hasBuildings && !siblingHasBuildings) {
             PaymentService.mortgageProperty(player, field)
             recomputeCanPayAfterAssets(gameState)
             messagingTemplate.convertAndSend(
@@ -1264,6 +1307,8 @@ class WebSocketBrokerController(
             )
         } else if (hasBuildings) {
             sendGameError(action, gameState, "Sell all houses/hotels before mortgaging.")
+        } else if (siblingHasBuildings) {
+            sendGameError(action, gameState, "Sell all houses/hotels in the color set before mortgaging.")
         }
     }
 
@@ -1384,9 +1429,9 @@ class WebSocketBrokerController(
                 creditor.ownedPropertyIds.removeAll(transferredIds.toSet())
                 creditor.ownedPropertyIds.addAll(transferredIds)
             } else {
-                // Creditor is bankrupt or removed — return properties to bank
                 ownedFields.forEach { field ->
                     field.ownerId = null
+                    field.isMortgaged = false
                     transferredIds.add((field as Field).id)
                 }
             }
@@ -1396,7 +1441,10 @@ class WebSocketBrokerController(
             player.money = 0
             gameState.fields.filterIsInstance<OwnableField>()
                 .filter { it.ownerId == player.id }
-                .forEach { it.ownerId = null }
+                .forEach {
+                    it.ownerId = null
+                    it.isMortgaged = false
+                }
             player.ownedPropertyIds.clear()
             player.getOutOfJailCards = 0
         }
