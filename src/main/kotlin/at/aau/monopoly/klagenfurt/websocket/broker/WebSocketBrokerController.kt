@@ -1361,14 +1361,37 @@ class WebSocketBrokerController(
             player.ownedPropertyIds.clear()
         }
 
-        val properties = gameState.fields.filterIsInstance<PropertyField>()
-        properties.forEachIndexed { index, property ->
+        val ownableFields = gameState.fields.filterIsInstance<OwnableField>()
+
+        // Reset all ownable fields
+        ownableFields.forEach { field ->
+            field.ownerId = null
+            field.isMortgaged = false
+            if (field is PropertyField) {
+                field.hasHotel = false
+                field.houses = 0
+            }
+        }
+
+        // Assign complete color groups to players round-robin, place houses
+        val propertyFields = ownableFields.filterIsInstance<PropertyField>()
+        val colorGroups = propertyFields.groupBy { it.color }
+        colorGroups.entries.forEachIndexed { index, (_, group) ->
             val owner = players[index % players.size]
-            property.ownerId = owner.id
-            property.isMortgaged = false
-            property.hasHotel = false
-            property.houses = 3
-            owner.ownedPropertyIds.add(property.id)
+            group.forEach { prop ->
+                prop.ownerId = owner.id
+                prop.houses = 3
+                owner.ownedPropertyIds.add(prop.id)
+            }
+        }
+
+        // Assign railroads and utilities round-robin (no houses)
+        val railroads = gameState.fields.filterIsInstance<RailroadField>()
+        val utilities = gameState.fields.filterIsInstance<UtilityField>()
+        (railroads + utilities).forEachIndexed { index, field ->
+            val owner = players[index % players.size]
+            field.ownerId = owner.id
+            owner.ownedPropertyIds.add(field.id)
         }
 
         gameState.pendingPayment = null
