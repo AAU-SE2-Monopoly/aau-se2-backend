@@ -1,6 +1,9 @@
 package at.aau.monopoly.klagenfurt.controller
 
+import at.aau.monopoly.klagenfurt.model.PaymentSource
+import at.aau.monopoly.klagenfurt.model.PendingPayment
 import at.aau.monopoly.klagenfurt.model.Player
+import at.aau.monopoly.klagenfurt.model.enums.GamePhase
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 
@@ -285,5 +288,49 @@ class GameControllerTest {
         assertEquals(game.gameId, closed.gameId)
         // Game should be removed
         assertNull(controller.getGameState(game.gameId))
+    }
+
+    @Test
+    fun `bankrupt player rejoin preserves eliminated state for spectating`() {
+        val controller = GameController()
+        val game = controller.createGame(hostPlayerId = "p1")
+        controller.joinGame(game.gameId, Player(id = "p1", name = "Alice", money = 0))
+        controller.joinGame(game.gameId, Player(id = "p2", name = "Bob"))
+        game.players[0].eliminated = true
+
+        val rejoined = controller.joinGame(game.gameId, Player(id = "p1", name = "Alice"))
+
+        assertTrue(rejoined.players[0].eliminated)
+        assertEquals(0, rejoined.players[0].money)
+        assertEquals(2, rejoined.players.size)
+    }
+
+    @Test
+    fun `player with pending rent still owes after rejoin`() {
+        val controller = GameController()
+        val game = controller.createGame(hostPlayerId = "p1")
+        controller.joinGame(game.gameId, Player(id = "p1", name = "Alice"))
+        controller.joinGame(game.gameId, Player(id = "p2", name = "Bob"))
+        game.phase = GamePhase.PAYING_RENT
+        game.pendingPayment = PendingPayment(amount = 200, source = PaymentSource.RENT,
+            sourceFieldId = 1, creditorPlayerId = "p2")
+
+        val rejoined = controller.joinGame(game.gameId, Player(id = "p1", name = "Alice"))
+
+        assertEquals(200, rejoined.pendingPayment?.amount)
+        assertEquals(GamePhase.PAYING_RENT, rejoined.phase)
+    }
+
+    @Test
+    fun `rejoin does not duplicate player in players list`() {
+        val controller = GameController()
+        val game = controller.createGame(hostPlayerId = "p1")
+        controller.joinGame(game.gameId, Player(id = "p1", name = "Alice"))
+        controller.joinGame(game.gameId, Player(id = "p2", name = "Bob"))
+        game.players[0].eliminated = true
+
+        val rejoined = controller.joinGame(game.gameId, Player(id = "p1", name = "AliceRejoin"))
+        assertEquals(2, rejoined.players.size)
+        assertEquals("Alice", rejoined.players[0].name)
     }
 }

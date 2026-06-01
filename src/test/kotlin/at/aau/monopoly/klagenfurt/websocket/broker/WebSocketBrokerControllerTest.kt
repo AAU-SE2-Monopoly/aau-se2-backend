@@ -2524,4 +2524,683 @@ class WebSocketBrokerControllerTest {
         assertEquals(15, gameState.chanceCards.size) // 16 reshuffled - 1 drawn
     }
 
+    @Test
+    fun `handlePayRent should deduct from payer and credit owner correctly`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 500))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 500))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(
+            amount = 100,
+            source = PaymentSource.RENT,
+            sourceFieldId = 1,
+            creditorPlayerId = "host-2",
+            debtorCanPayAfterAssets = true
+        )
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "PAY_RENT",
+                payload = mutableMapOf("fieldId" to "1")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals(GameEvent.RENT_PAID, event.event)
+        assertEquals(400, gameState.players[0].money)
+        assertEquals(600, gameState.players[1].money)
+        assertNull(gameState.pendingPayment)
+        assertEquals(GamePhase.TURN_END, gameState.phase)
+    }
+
+    @Test
+    fun `handlePayRent sends PAYMENT_FAILED when player cannot afford rent`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 50))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 500))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(
+            amount = 100,
+            source = PaymentSource.RENT,
+            sourceFieldId = 1,
+            creditorPlayerId = "host-2",
+            debtorCanPayAfterAssets = false
+        )
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "PAY_RENT",
+                payload = mutableMapOf("fieldId" to "1")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals(GameEvent.PAYMENT_FAILED, event.event)
+        assertTrue(event.message!!.contains("Insufficient funds"))
+    }
+
+    @Test
+    fun `handlePayRent clears pending rent fields after payment`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 500))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 500))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(
+            amount = 50,
+            source = PaymentSource.RENT,
+            sourceFieldId = 1,
+            creditorPlayerId = "host-2",
+            debtorCanPayAfterAssets = true
+        )
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "PAY_RENT",
+                payload = mutableMapOf("fieldId" to "1")
+            )
+        )
+
+        captureLastMessages(messagingTemplate, 1)
+        assertNull(gameState.pendingPayment)
+        assertEquals(GamePhase.TURN_END, gameState.phase)
+    }
+
+    @Test
+    fun `handleBuyHouse rejects when phase is PAYING_RENT`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.PAYING_RENT
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "BUY_HOUSE",
+                payload = mutableMapOf("fieldId" to "1")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("Cannot buy houses while rent is due"))
+    }
+
+    @Test
+    fun `handleBuyHotel rejects when phase is PAYING_RENT`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.PAYING_RENT
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "BUY_HOTEL",
+                payload = mutableMapOf("fieldId" to "1")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("Cannot buy hotels while rent is due"))
+    }
+
+    @Test
+    fun `handleBuyProperty rejects when phase is PAYING_RENT`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.PAYING_RENT
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "BUY_PROPERTY",
+                payload = mutableMapOf("fieldId" to "1")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("Cannot buy property while rent is due"))
+    }
+
+    @Test
+    fun `handleDeclareBankruptcy rejects when player can pay after liquidation`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 500))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 500))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(
+            amount = 100,
+            source = PaymentSource.RENT,
+            sourceFieldId = 1,
+            creditorPlayerId = "host-2"
+        )
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DECLARE_BANKRUPTCY"
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("You can still pay"))
+    }
+
+    @Test
+    fun `handleDeclareBankruptcy transfers properties to creditor and sets money to zero`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 10))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 500))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(
+            amount = 100,
+            source = PaymentSource.RENT,
+            sourceFieldId = 1,
+            creditorPlayerId = "host-2"
+        )
+
+        val prop1 = gameState.fields[1] as PropertyField
+        prop1.ownerId = "host-1"
+        prop1.isMortgaged = true
+        gameState.players[0].ownedPropertyIds.add(1)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DECLARE_BANKRUPTCY"
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals(GameEvent.BANKRUPTCY_DECLARED, event.event)
+        assertEquals(0, gameState.players[0].money)
+        assertTrue(gameState.players[0].eliminated)
+        assertEquals("host-2", prop1.ownerId)
+    }
+
+    @Test
+    fun `handleDeclareBankruptcy transfers get out of jail cards to creditor`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 10, getOutOfJailCards = 2))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 500))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(
+            amount = 100,
+            source = PaymentSource.RENT,
+            sourceFieldId = 1,
+            creditorPlayerId = "host-2"
+        )
+
+        val prop1 = gameState.fields[1] as PropertyField
+        prop1.ownerId = "host-1"
+        prop1.isMortgaged = true
+        gameState.players[0].ownedPropertyIds.add(1)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DECLARE_BANKRUPTCY"
+            )
+        )
+
+        captureLastMessages(messagingTemplate, 1)
+        assertEquals(0, gameState.players[0].getOutOfJailCards)
+        assertEquals(2, gameState.players[1].getOutOfJailCards)
+    }
+
+    @Test
+    fun `after bankruptcy declaration other players can still end turn and advance game`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 10))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 500))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(
+            amount = 100,
+            source = PaymentSource.RENT,
+            sourceFieldId = 1,
+            creditorPlayerId = "host-2"
+        )
+
+        val prop1 = gameState.fields[1] as PropertyField
+        prop1.ownerId = "host-1"
+        prop1.isMortgaged = true
+        gameState.players[0].ownedPropertyIds.add(1)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DECLARE_BANKRUPTCY"
+            )
+        )
+
+        Mockito.clearInvocations(messagingTemplate)
+
+        gameState.currentPlayerIndex = 1
+        gameState.phase = GamePhase.TURN_END
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-2",
+                action = "END_TURN"
+            )
+        )
+
+        val events = captureLastMessages(messagingTemplate, 1)
+        val event = events.single().second as GameEvent
+        assertNotNull(event)
+        assertTrue(event.event == "TURN_ENDED" || event.gameState?.phase == GamePhase.FINISHED)
+    }
+
+    @Test
+    fun `handleMortgageProperty should set isMortgaged true and add half price`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 500))
+        gameState.phase = GamePhase.BUYING
+
+        val prop1 = gameState.fields[1] as PropertyField
+        prop1.ownerId = "host-1"
+        gameState.players[0].ownedPropertyIds.add(1)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "MORTGAGE_PROPERTY",
+                payload = mutableMapOf("fieldId" to "1")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals(GameEvent.PROPERTY_MORTGAGED, event.event)
+        assertTrue(prop1.isMortgaged)
+        assertEquals(500 + 60 / 2, gameState.players[0].money)
+    }
+
+    @Test
+    fun `handleUnmortgageProperty should set isMortgaged false and deduct cost`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 500))
+        gameState.phase = GamePhase.BUYING
+
+        val prop1 = gameState.fields[1] as PropertyField
+        prop1.ownerId = "host-1"
+        prop1.isMortgaged = true
+        gameState.players[0].ownedPropertyIds.add(1)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "UNMORTGAGE_PROPERTY",
+                payload = mutableMapOf("fieldId" to "1")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals(GameEvent.PROPERTY_UNMORTGAGED, event.event)
+        assertFalse(prop1.isMortgaged)
+        assertEquals(500 - 33, gameState.players[0].money)
+    }
+
+    @Test
+    fun `PAY_RENT rejects non-current player`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob"))
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(amount = 100, source = PaymentSource.RENT, sourceFieldId = 1, creditorPlayerId = "host-2")
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-2", action = "PAY_RENT",
+            payload = mutableMapOf("fieldId" to "1")))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("not your turn"))
+    }
+
+    @Test
+    fun `DECLARE_BANKRUPTCY rejects non-current player`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob"))
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(amount = 100, source = PaymentSource.RENT, sourceFieldId = 1, creditorPlayerId = "host-2")
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-2", action = "DECLARE_BANKRUPTCY"))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("not your turn"))
+    }
+
+    @Test
+    fun `MORTGAGE_PROPERTY rejects non-current player`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob"))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.BUYING
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-2", action = "MORTGAGE_PROPERTY",
+            payload = mutableMapOf("fieldId" to "1")))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("not your turn"))
+    }
+
+    @Test
+    fun `UNMORTGAGE_PROPERTY rejects non-current player`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob"))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.BUYING
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-2", action = "UNMORTGAGE_PROPERTY",
+            payload = mutableMapOf("fieldId" to "1")))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("not your turn"))
+    }
+
+    @Test
+    fun `DECLARE_BANKRUPTCY rejects when phase is not PAYING_RENT`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.phase = GamePhase.BUYING
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "DECLARE_BANKRUPTCY"))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("only be declared when a payment is due"))
+    }
+
+    @Test
+    fun `SELL_HOUSE succeeds during PAYING_RENT phase to raise funds`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 500))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 500))
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(amount = 200, source = PaymentSource.RENT, sourceFieldId = 1,
+            creditorPlayerId = "host-2")
+        gameState.currentPlayerIndex = 0
+        val prop = gameState.fields[1] as PropertyField
+        prop.ownerId = "host-1"
+        prop.houses = 1
+        gameState.players[0].ownedPropertyIds.add(1)
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "SELL_HOUSE",
+            payload = mutableMapOf("fieldId" to "1")))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("HOUSE_SOLD", event.event)
+        assertEquals(0, prop.houses)
+    }
+
+    @Test
+    fun `SELL_HOTEL succeeds during PAYING_RENT phase to raise funds`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 500))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 500))
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(amount = 200, source = PaymentSource.RENT, sourceFieldId = 1,
+            creditorPlayerId = "host-2")
+        gameState.currentPlayerIndex = 0
+        val prop = gameState.fields[1] as PropertyField
+        prop.ownerId = "host-1"
+        prop.hasHotel = true
+        gameState.players[0].ownedPropertyIds.add(1)
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "SELL_HOTEL",
+            payload = mutableMapOf("fieldId" to "1")))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("HOTEL_SOLD", event.event)
+        assertEquals(false, prop.hasHotel)
+    }
+
+    @Test
+    fun `MORTGAGE succeeds during PAYING_RENT phase to raise funds`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 500))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 500))
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(amount = 200, source = PaymentSource.RENT, sourceFieldId = 1,
+            creditorPlayerId = "host-2")
+        gameState.currentPlayerIndex = 0
+        val prop = gameState.fields[1] as PropertyField
+        prop.ownerId = "host-1"
+        gameState.players[0].ownedPropertyIds.add(1)
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "MORTGAGE_PROPERTY",
+            payload = mutableMapOf("fieldId" to "1")))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals(GameEvent.PROPERTY_MORTGAGED, event.event)
+        assertTrue(prop.isMortgaged)
+    }
+
+    @Test
+    fun `UNMORTGAGE rejects during PAYING_RENT phase`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 500))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 500))
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(amount = 200, source = PaymentSource.RENT, sourceFieldId = 1,
+            creditorPlayerId = "host-2")
+        gameState.currentPlayerIndex = 0
+        val prop = gameState.fields[1] as PropertyField
+        prop.ownerId = "host-1"
+        prop.isMortgaged = true
+        gameState.players[0].ownedPropertyIds.add(1)
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "UNMORTGAGE_PROPERTY",
+            payload = mutableMapOf("fieldId" to "1")))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("Cannot unmortgage while rent is due"))
+    }
+
+    @Test
+    fun `PAY_RENT rejects when player is bankrupt`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 0, ownedPropertyIds = mutableListOf()))
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(amount = 100, source = PaymentSource.RENT, sourceFieldId = 1,
+            creditorPlayerId = "host-2")
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "PAY_RENT",
+            payload = mutableMapOf("fieldId" to "1")))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("bankrupt"))
+    }
+
+    @Test
+    fun `PAY_RENT rejects when fieldId does not match sourceFieldId`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 500))
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(amount = 50, source = PaymentSource.RENT, sourceFieldId = 1,
+            creditorPlayerId = "host-2")
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "PAY_RENT",
+            payload = mutableMapOf("fieldId" to "99")))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("Invalid fieldId"))
+    }
+
+    @Test
+    fun `DECLARE_BANKRUPTCY rejects when player has buildings`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 10))
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(amount = 100, source = PaymentSource.RENT, sourceFieldId = 1,
+            creditorPlayerId = "host-2")
+        gameState.currentPlayerIndex = 0
+        val prop = gameState.fields[1] as PropertyField
+        prop.ownerId = "host-1"
+        prop.houses = 1
+        gameState.players[0].ownedPropertyIds.add(1)
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "DECLARE_BANKRUPTCY"))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("Sell all houses and hotels"))
+    }
+
+    @Test
+    fun `DECLARE_BANKRUPTCY rejects when player has unmortgaged properties`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 10))
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(amount = 100, source = PaymentSource.RENT, sourceFieldId = 1,
+            creditorPlayerId = "host-2")
+        gameState.currentPlayerIndex = 0
+        val prop = gameState.fields[1] as PropertyField
+        prop.ownerId = "host-1"
+        gameState.players[0].ownedPropertyIds.add(1)
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "DECLARE_BANKRUPTCY"))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("Mortgage all properties"))
+    }
+
+    @Test
+    fun `DECLARE_BANKRUPTCY rejects when player already eliminated`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 10))
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(amount = 100, source = PaymentSource.RENT, sourceFieldId = 1,
+            creditorPlayerId = "host-2")
+        gameState.currentPlayerIndex = 0
+        gameState.players[0].eliminated = true
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "DECLARE_BANKRUPTCY"))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("already declared bankruptcy"))
+    }
+
+    @Test
+    fun `DECLARE_BANKRUPTCY returns properties to bank when no creditor`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 10))
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(amount = 100, source = PaymentSource.RENT, sourceFieldId = 1,
+            creditorPlayerId = null)
+        gameState.currentPlayerIndex = 0
+        val prop = gameState.fields[1] as PropertyField
+        prop.ownerId = "host-1"
+        prop.isMortgaged = true
+        gameState.players[0].ownedPropertyIds.add(1)
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "DECLARE_BANKRUPTCY"))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals(GameEvent.BANKRUPTCY_DECLARED, event.event)
+        assertEquals(0, gameState.players[0].money)
+        assertNull(prop.ownerId)
+    }
+
+    @Test
+    fun `MORTGAGE rejects when player is bankrupt`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 0, ownedPropertyIds = mutableListOf()))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.BUYING
+        val prop = gameState.fields[1] as PropertyField
+        prop.ownerId = "host-1"
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "MORTGAGE_PROPERTY",
+            payload = mutableMapOf("fieldId" to "1")))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("bankrupt"))
+    }
+
+    @Test
+    fun `MORTGAGE rejects when field has buildings`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 500))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.BUYING
+        val prop = gameState.fields[1] as PropertyField
+        prop.ownerId = "host-1"
+        prop.houses = 1
+        gameState.players[0].ownedPropertyIds.add(1)
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "MORTGAGE_PROPERTY",
+            payload = mutableMapOf("fieldId" to "1")))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("Sell all houses"))
+    }
 }
