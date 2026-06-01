@@ -169,4 +169,133 @@ class PaymentServiceTest {
 
         assertFalse(PaymentService.canPayAfterAssets(player, fields, 110))
     }
+
+    // ─── Official even-building rule for selling (line 72 monopoly_rules.md) ──────
+    // "buildings must be sold evenly across the colour set"
+
+    @Test
+    fun `sellHouse allowed from highest property when siblings are lower`() {
+        val player = Player(id = "p1", name = "Alice")
+        // (3, 2): selling from 3→2 makes (2, 2) — even
+        val field1 = propertyField(id = 1, color = PropertyColor.BROWN, ownerId = "p1", houses = 3)
+        val field2 = propertyField(id = 2, color = PropertyColor.BROWN, ownerId = "p1", houses = 2)
+        val fields = listOf(field1, field2)
+
+        PaymentService.sellHouse(player, field1, fields)
+
+        assertEquals(2, field1.houses)
+        assertEquals(1525, player.money)
+    }
+
+    @Test
+    fun `sellHouse blocked from lowest property when higher sibling exists`() {
+        val player = Player(id = "p1", name = "Alice")
+        // (1, 3): selling from 1→0 makes (0, 3) — diff=3, uneven → BLOCKED
+        val field1 = propertyField(id = 1, color = PropertyColor.BROWN, ownerId = "p1", houses = 1)
+        val field2 = propertyField(id = 2, color = PropertyColor.BROWN, ownerId = "p1", houses = 3)
+        val fields = listOf(field1, field2)
+
+        val beforeMoney = player.money
+        PaymentService.sellHouse(player, field1, fields)
+
+        assertEquals(1, field1.houses)
+        assertEquals(beforeMoney, player.money)
+    }
+
+    @Test
+    fun `sellHouse allowed from any property when all equal`() {
+        val player = Player(id = "p1", name = "Alice")
+        // (2, 2): selling from either → (1, 2) — diff=1, acceptable
+        val field1 = propertyField(id = 1, color = PropertyColor.BROWN, ownerId = "p1", houses = 2)
+        val field2 = propertyField(id = 2, color = PropertyColor.BROWN, ownerId = "p1", houses = 2)
+        val fields = listOf(field1, field2)
+
+        PaymentService.sellHouse(player, field1, fields)
+
+        assertEquals(1, field1.houses)
+    }
+
+    @Test
+    fun `sellHouse allowed for single property in color group`() {
+        val player = Player(id = "p1", name = "Alice")
+        // Only one BROWN property owned — no siblings, always allowed
+        val field = propertyField(id = 1, color = PropertyColor.BROWN, ownerId = "p1", houses = 2)
+        val fields = listOf(field)
+
+        PaymentService.sellHouse(player, field, fields)
+
+        assertEquals(1, field.houses)
+    }
+
+    @Test
+    fun `sellHouse allowed when selling the last house creates even zeroes`() {
+        val player = Player(id = "p1", name = "Alice")
+        // (1, 0): selling from 1→0 makes (0, 0) — even
+        val field1 = propertyField(id = 1, color = PropertyColor.BROWN, ownerId = "p1", houses = 1)
+        val field2 = propertyField(id = 2, color = PropertyColor.BROWN, ownerId = "p1", houses = 0)
+        val fields = listOf(field1, field2)
+
+        PaymentService.sellHouse(player, field1, fields)
+
+        assertEquals(0, field1.houses)
+    }
+
+    @Test
+    fun `sellHouse blocked from middle property when highest exists among three`() {
+        val player = Player(id = "p1", name = "Alice")
+        // (3, 2, 2): selling from the middle 2→1 leaves (3, 1, 2) — diff=2 → BLOCKED
+        val field1 = propertyField(id = 1, color = PropertyColor.BROWN, ownerId = "p1", houses = 3)
+        val field2 = propertyField(id = 2, color = PropertyColor.BROWN, ownerId = "p1", houses = 2)
+        val field3 = propertyField(id = 3, color = PropertyColor.BROWN, ownerId = "p1", houses = 2)
+        val fields = listOf(field1, field2, field3)
+
+        val beforeMoney = player.money
+        PaymentService.sellHouse(player, field2, fields)
+
+        assertEquals(2, field2.houses)
+        assertEquals(beforeMoney, player.money)
+    }
+
+    @Test
+    fun `sellHouse allowed from highest property among three`() {
+        val player = Player(id = "p1", name = "Alice")
+        // (3, 2, 2): selling from 3→2 makes (2, 2, 2) — even
+        val field1 = propertyField(id = 1, color = PropertyColor.BROWN, ownerId = "p1", houses = 3)
+        val field2 = propertyField(id = 2, color = PropertyColor.BROWN, ownerId = "p1", houses = 2)
+        val field3 = propertyField(id = 3, color = PropertyColor.BROWN, ownerId = "p1", houses = 2)
+        val fields = listOf(field1, field2, field3)
+
+        PaymentService.sellHouse(player, field1, fields)
+
+        assertEquals(2, field1.houses)
+    }
+
+    @Test
+    fun `sellHotel blocked when sibling has 0 houses`() {
+        val player = Player(id = "p1", name = "Alice")
+        // Hotel on field1, field2 has 0 houses → can't sell hotel (sibling must have ≥4)
+        val field1 = propertyField(id = 1, color = PropertyColor.BROWN, ownerId = "p1", hasHotel = true)
+        val field2 = propertyField(id = 2, color = PropertyColor.BROWN, ownerId = "p1", houses = 0)
+        val fields = listOf(field1, field2)
+
+        val beforeMoney = player.money
+        PaymentService.sellHotel(player, field1, fields)
+
+        assertTrue(field1.hasHotel)
+        assertEquals(beforeMoney, player.money)
+    }
+
+    @Test
+    fun `sellHotel allowed when sibling has exactly 4 houses`() {
+        val player = Player(id = "p1", name = "Alice")
+        // Hotel on field1, field2 has 4 houses → can sell hotel (sibling ≥4)
+        val field1 = propertyField(id = 1, color = PropertyColor.BROWN, ownerId = "p1", hasHotel = true, hotelCost = 100)
+        val field2 = propertyField(id = 2, color = PropertyColor.BROWN, ownerId = "p1", houses = 4)
+        val fields = listOf(field1, field2)
+
+        PaymentService.sellHotel(player, field1, fields)
+
+        assertFalse(field1.hasHotel)
+        assertEquals(4, field1.houses)
+    }
 }

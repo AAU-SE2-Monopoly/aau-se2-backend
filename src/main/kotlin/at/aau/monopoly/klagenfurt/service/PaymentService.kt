@@ -48,7 +48,8 @@ object PaymentService {
         // Even building rule: check all other properties in the same color group
         val siblings = allFields.filterIsInstance<PropertyField>()
             .filter { it.color == field.color && it.id != field.id && it.ownerId == player.id }
-        if (siblings.any { it.houses < newHouseCount }) {
+        // Must sell from the most-developed property: siblings must be in [newCount, current].
+        if (siblings.any { it.houses < newHouseCount || it.houses > field.houses }) {
             return player // cannot sell — would violate even building rule
         }
         field.houses -= 1
