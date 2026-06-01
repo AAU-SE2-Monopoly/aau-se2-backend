@@ -1305,6 +1305,22 @@ class WebSocketBrokerController(
             return
         }
 
+        val hasBuildings = gameState.fields
+            .filterIsInstance<PropertyField>()
+            .any { it.ownerId == player.id && (it.houses > 0 || it.hasHotel) }
+        if (hasBuildings) {
+            sendGameError(action, gameState, "Sell all houses and hotels before declaring bankruptcy.")
+            return
+        }
+
+        val hasUnmortgaged = gameState.fields
+            .filterIsInstance<OwnableField>()
+            .any { it.ownerId == player.id && !it.isMortgaged }
+        if (hasUnmortgaged) {
+            sendGameError(action, gameState, "Mortgage all properties before declaring bankruptcy.")
+            return
+        }
+
         if (PaymentService.canPayAfterAssets(player, gameState.fields, pending.amount)) {
             sendGameError(action, gameState,
                 "You can still pay by mortgaging properties or selling buildings. Declare bankruptcy only if your total assets are insufficient.")
