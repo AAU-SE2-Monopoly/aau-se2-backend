@@ -1300,6 +1300,11 @@ class WebSocketBrokerController(
 
         val player = gameState.currentPlayer!!
 
+        if (player.eliminated) {
+            sendGameError(action, gameState, "You have already declared bankruptcy.")
+            return
+        }
+
         if (PaymentService.canPayAfterAssets(player, gameState.fields, pending.amount)) {
             sendGameError(action, gameState,
                 "You can still pay by mortgaging properties or selling buildings. Declare bankruptcy only if your total assets are insufficient.")
