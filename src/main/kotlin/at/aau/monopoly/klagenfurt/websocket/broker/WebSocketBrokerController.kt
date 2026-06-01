@@ -1173,7 +1173,7 @@ class WebSocketBrokerController(
                     sendGameError(action, gameState, "Creditor not found or bankrupt.")
                     return
                 }
-                if (player.money < pending.amount) {
+                if (!PaymentService.canPayAfterAssets(player, gameState.fields, pending.amount)) {
                     sendPaymentFailed(action, gameState, pending.amount)
                     return
                 }
