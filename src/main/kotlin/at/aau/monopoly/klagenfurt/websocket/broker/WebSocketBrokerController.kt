@@ -229,6 +229,11 @@ class WebSocketBrokerController(
 
                 "DECLARE_BANKRUPTCY" -> handleDeclareBankruptcy(action, gameState)
 
+                /** DEBUG remove this block of code to remove */
+                "DEBUG_FORWARD_GAME" -> handleDebugForwardGame(action, gameState)
+                /** DEBUG remove this block of code to remove */
+                "DEBUG_SETUP_BANKRUPTCY" -> handleDebugSetupBankruptcy(action, gameState)
+
                 else -> {
                     messagingTemplate.convertAndSend(
                         "/topic/game/${action.gameId}",
@@ -1327,6 +1332,91 @@ class WebSocketBrokerController(
         messagingTemplate.convertAndSend(
             "/topic/game/${action.gameId}",
             GameEvent(gameId = action.gameId, event = GameEvent.BANKRUPTCY_DECLARED, gameState = gameState)
+        )
+    }
+
+    /** DEBUG remove this block of code to remove */
+    private fun handleDebugForwardGame(
+        action: GameAction,
+        gameState: GameState
+    ) {
+        if (!validateCurrentPlayerTurn(action, gameState)) return
+
+        if (gameState.phase == GamePhase.WAITING) {
+            sendGameError(action, gameState, "Start the game before using debug forward.")
+            return
+        }
+
+        val players = gameState.players
+        if (players.isEmpty()) {
+            sendGameError(action, gameState, "No players available for debug forward.")
+            return
+        }
+
+        players.forEach { player ->
+            player.money = 10_000
+            player.inJail = false
+            player.jailTurns = 0
+            player.consecutiveDoublets = 0
+            player.ownedPropertyIds.clear()
+        }
+
+        val properties = gameState.fields.filterIsInstance<PropertyField>()
+        properties.forEachIndexed { index, property ->
+            val owner = players[index % players.size]
+            property.ownerId = owner.id
+            property.isMortgaged = false
+            property.hasHotel = false
+            property.houses = 3
+            owner.ownedPropertyIds.add(property.id)
+        }
+
+        gameState.pendingPayment = null
+        gameState.currentActionCard = null
+        gameState.phase = GamePhase.BUYING
+
+        sendGameEvent(
+            action,
+            gameState,
+            "STATE_UPDATED",
+            "DEBUG: game forwarded to endgame-like setup (3 houses on all properties)."
+        )
+    }
+
+    /** DEBUG remove this block of code to remove */
+    private fun handleDebugSetupBankruptcy(
+        action: GameAction,
+        gameState: GameState
+    ) {
+        if (!validateCurrentPlayerTurn(action, gameState)) return
+
+        if (gameState.phase == GamePhase.WAITING) {
+            sendGameError(action, gameState, "Start the game before using debug bankruptcy setup.")
+            return
+        }
+
+        val debtor = gameState.currentPlayer ?: run {
+            sendGameError(action, gameState, "No current player available for debug bankruptcy setup.")
+            return
+        }
+
+        val creditor = gameState.players.firstOrNull { it.id != debtor.id }
+
+        debtor.money = 25
+        gameState.pendingPayment = PendingPayment(
+            amount = 1200,
+            source = PaymentSource.RENT,
+            sourceFieldId = null,
+            creditorPlayerId = creditor?.id
+        )
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.currentActionCard = null
+
+        sendGameEvent(
+            action,
+            gameState,
+            "RENT_DUE",
+            "DEBUG: bankruptcy setup active (high pending payment)."
         )
     }
 
