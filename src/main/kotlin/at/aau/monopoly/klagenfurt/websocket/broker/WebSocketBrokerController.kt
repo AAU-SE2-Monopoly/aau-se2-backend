@@ -1138,7 +1138,11 @@ class WebSocketBrokerController(
             return
         }
 
-        val pending = gameState.pendingPayment ?: return
+        val pending = gameState.pendingPayment
+        if (pending == null) {
+            sendGameError(action, gameState, "No pending payment found.")
+            return
+        }
         if (pending.amount <= 0) {
             sendGameError(action, gameState, "No pending payment to pay.")
             return
@@ -1429,7 +1433,7 @@ class WebSocketBrokerController(
         gameState.pendingPayment = PendingPayment(
             amount = 1200,
             source = PaymentSource.RENT,
-            sourceFieldId = null,
+            sourceFieldId = debtor.position,
             creditorPlayerId = creditor?.id
         )
         gameState.phase = GamePhase.PAYING_RENT
