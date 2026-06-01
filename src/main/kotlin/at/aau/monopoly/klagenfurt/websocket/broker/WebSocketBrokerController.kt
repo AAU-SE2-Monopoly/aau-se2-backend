@@ -878,16 +878,16 @@ class WebSocketBrokerController(
             eventMessage = handleNormalRoll(gameState, player, roll, eventMessage)
         }
 
+        if (!player.inJail) {
+            resolveLandingEffects(action, gameState, player)
+        }
+
         sendGameEvent(
             action,
             gameState,
             "DICE_ROLLED",
             eventMessage
         )
-
-        if (!player.inJail) {
-            resolveLandingEffects(action, gameState, player)
-        }
     }
 
     private fun createDiceRoll(action: GameAction): DiceRoll {
