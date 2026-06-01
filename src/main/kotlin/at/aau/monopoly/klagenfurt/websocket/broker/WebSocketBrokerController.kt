@@ -1307,6 +1307,7 @@ class WebSocketBrokerController(
                     field.ownerId = creditorId
                     transferredIds.add((field as Field).id)
                 }
+                creditor.ownedPropertyIds.removeAll(transferredIds.toSet())
                 creditor.ownedPropertyIds.addAll(transferredIds)
             } else {
                 // Creditor is bankrupt or removed — return properties to bank
