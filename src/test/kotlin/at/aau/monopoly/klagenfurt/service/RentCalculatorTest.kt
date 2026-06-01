@@ -1,7 +1,5 @@
 package at.aau.monopoly.klagenfurt.service
 
-import at.aau.monopoly.klagenfurt.model.BoardFactory
-import at.aau.monopoly.klagenfurt.model.Player
 import at.aau.monopoly.klagenfurt.model.field.PropertyField
 import at.aau.monopoly.klagenfurt.model.field.RailroadField
 import at.aau.monopoly.klagenfurt.model.field.UtilityField

@@ -2,8 +2,6 @@ package at.aau.monopoly.klagenfurt.service
 
 import at.aau.monopoly.klagenfurt.model.Player
 import at.aau.monopoly.klagenfurt.model.field.PropertyField
-import at.aau.monopoly.klagenfurt.model.field.RailroadField
-import at.aau.monopoly.klagenfurt.model.field.UtilityField
 import at.aau.monopoly.klagenfurt.model.enums.PropertyColor
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
