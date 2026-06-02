@@ -100,7 +100,9 @@ object PaymentService {
                 if (field is PropertyField) {
                     total += field.houses * (field.houseCost / 2)
                     if (field.hasHotel) {
-                        total += field.hotelCost / 2
+                        // A hotel sell-back returns half the hotel cost AND replaces it with 4 houses
+                        // which can then also be sold back.
+                        total += (field.hotelCost / 2) + (4 * (field.houseCost / 2))
                     }
                 }
             }

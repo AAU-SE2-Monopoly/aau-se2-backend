@@ -565,12 +565,12 @@ class WebSocketBrokerController(
             return
         }
 
-        if (player.money < property.hotelCost) {
+        if (player.money < property.houseCost) {
             sendGameError(action, gameState, "Not enough money to buy a hotel.")
             return
         }
 
-        player.money -= property.hotelCost
+        player.money -= property.houseCost
         property.houses = 0
         property.hasHotel = true
 
