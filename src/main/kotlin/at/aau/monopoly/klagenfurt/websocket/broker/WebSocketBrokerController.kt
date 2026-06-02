@@ -475,12 +475,7 @@ class WebSocketBrokerController(
         }
 
         val property = getValidatedProperty(action, gameState) ?: return
-        val player = gameState.currentPlayer!!
-
-        if (gameState.phase != GamePhase.BUYING && gameState.phase != GamePhase.TURN_END) {
-            sendGameError(action, gameState, "Houses can only be bought during your turn.")
-            return
-        }
+        val player = gameState.players.find { it.id == action.playerId } ?: return
 
         if (property.ownerId != player.id) {
             sendGameError(action, gameState, "You can only build on your own properties.")
@@ -538,7 +533,7 @@ class WebSocketBrokerController(
         }
 
         val property = getValidatedProperty(action, gameState) ?: return
-        val player = gameState.currentPlayer!!
+        val player = gameState.players.find { it.id == action.playerId } ?: return
 
         if (property.ownerId != player.id) {
             sendGameError(action, gameState, "You can only build on your own properties.")
@@ -587,7 +582,7 @@ class WebSocketBrokerController(
         gameState: GameState
     ) {
         val property = getValidatedProperty(action, gameState) ?: return
-        val player = gameState.currentPlayer!!
+        val player = gameState.players.find { it.id == action.playerId } ?: return
 
         if (property.ownerId != player.id) {
             sendGameError(action, gameState, "You can only sell houses from your own properties.")
@@ -627,7 +622,7 @@ class WebSocketBrokerController(
         gameState: GameState
     ) {
         val property = getValidatedProperty(action, gameState) ?: return
-        val player = gameState.currentPlayer!!
+        val player = gameState.players.find { it.id == action.playerId } ?: return
 
         if (property.ownerId != player.id) {
             sendGameError(action, gameState, "You can only sell hotels from your own properties.")
@@ -1394,13 +1389,9 @@ class WebSocketBrokerController(
         action: GameAction,
         gameState: GameState
     ) {
-        if (!validateCurrentPlayerTurn(action, gameState)) return
+        if (!validatePlayerCanManageProperty(action, gameState)) return
 
-        val player = gameState.currentPlayer!!
-        if (player.isBankrupt()) {
-            sendGameError(action, gameState, "You are bankrupt and cannot mortgage properties.")
-            return
-        }
+        val player = gameState.players.find { it.id == action.playerId } ?: return
         val fieldId = action.payload["fieldId"]?.toIntOrNull() ?: return
         val field = gameState.fields.find { it.id == fieldId }
         val hasBuildings = field is PropertyField && (field.houses > 0 || field.hasHotel)
@@ -1427,18 +1418,14 @@ class WebSocketBrokerController(
         action: GameAction,
         gameState: GameState
     ) {
-        if (!validateCurrentPlayerTurn(action, gameState)) return
-
         if (gameState.phase == GamePhase.PAYING_RENT) {
             sendGameError(action, gameState, "Cannot unmortgage while rent is due.")
             return
         }
 
-        val player = gameState.currentPlayer!!
-        if (player.isBankrupt()) {
-            sendGameError(action, gameState, "You are bankrupt and cannot unmortgage properties.")
-            return
-        }
+        if (!validatePlayerCanManageProperty(action, gameState)) return
+
+        val player = gameState.players.find { it.id == action.playerId } ?: return
         val fieldId = action.payload["fieldId"]?.toIntOrNull() ?: return
         val field = gameState.fields.find { it.id == fieldId }
 
@@ -1586,11 +1573,36 @@ class WebSocketBrokerController(
         }
     }
 
+    /**
+     * Validates that [action.playerId] can manage properties (buy/sell houses, mortgage).
+     * Replaces validateCurrentPlayerTurn for property management actions — any active
+     * player may manage their properties at any time after the game has started.
+     */
+    private fun validatePlayerCanManageProperty(
+        action: GameAction,
+        gameState: GameState
+    ): Boolean {
+        if (gameState.phase == GamePhase.WAITING || gameState.phase == GamePhase.FINISHED) {
+            sendGameError(action, gameState, "Property management is only available during the game.")
+            return false
+        }
+        val player = gameState.players.find { it.id == action.playerId }
+        if (player == null) {
+            sendGameError(action, gameState, "Player not found in game.")
+            return false
+        }
+        if (player.isBankrupt()) {
+            sendGameError(action, gameState, "You are bankrupt and cannot manage properties.")
+            return false
+        }
+        return true
+    }
+
     private fun getValidatedProperty(
         action: GameAction,
         gameState: GameState
     ): PropertyField? {
-        if (!validateCurrentPlayerTurn(action, gameState)) return null
+        if (!validatePlayerCanManageProperty(action, gameState)) return null
 
         val fieldId = action.payload["fieldId"]?.toIntOrNull()
         if (fieldId == null || fieldId !in gameState.fields.indices) {

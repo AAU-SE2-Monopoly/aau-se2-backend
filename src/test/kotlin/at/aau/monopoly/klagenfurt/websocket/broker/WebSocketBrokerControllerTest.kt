@@ -2023,6 +2023,7 @@ class WebSocketBrokerControllerTest {
         )
 
         val player = gameState.currentPlayer!!
+        gameState.phase = GamePhase.ROLLING
 
         val property = gameState.fields[1] as PropertyField
         val sameColorProperties = gameState.fields
@@ -2060,6 +2061,7 @@ class WebSocketBrokerControllerTest {
         )
 
         val player = gameState.currentPlayer!!
+        gameState.phase = GamePhase.ROLLING
 
         val property = gameState.fields[1] as PropertyField
         property.ownerId = player.id
@@ -2132,6 +2134,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.phase = GamePhase.ROLLING
 
         val player = gameState.currentPlayer!!
         val property = gameState.fields[1] as PropertyField
@@ -2182,7 +2185,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 0))
-        gameState.phase = GamePhase.BUYING
+        gameState.phase = GamePhase.ROLLING
 
         val player = gameState.currentPlayer!!
         val property = gameState.fields[1] as PropertyField
@@ -2192,7 +2195,10 @@ class WebSocketBrokerControllerTest {
             .forEach {
                 it.ownerId = player.id
                 it.houses = 0
+                player.ownedPropertyIds.add(it.id)
             }
+
+        player.money = 0
 
         controller.handleAction(
             GameAction(
@@ -2243,6 +2249,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500))
+        gameState.phase = GamePhase.ROLLING
 
         val player = gameState.currentPlayer!!
         val property = gameState.fields[1] as PropertyField
@@ -2273,6 +2280,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.phase = GamePhase.ROLLING
 
         val player = gameState.currentPlayer!!
         val property = gameState.fields[1] as PropertyField
@@ -2298,6 +2306,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.phase = GamePhase.ROLLING
 
         val player = gameState.currentPlayer!!
         val property = gameState.fields[1] as PropertyField
@@ -2353,6 +2362,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 0))
+        gameState.phase = GamePhase.ROLLING
 
         val player = gameState.currentPlayer!!
         val property = gameState.fields[1] as PropertyField
@@ -2362,7 +2372,10 @@ class WebSocketBrokerControllerTest {
             .forEach {
                 it.ownerId = player.id
                 it.houses = 4
+                player.ownedPropertyIds.add(it.id)
             }
+
+        player.money = 0
 
         controller.handleAction(
             GameAction(
@@ -2911,37 +2924,46 @@ class WebSocketBrokerControllerTest {
     }
 
     @Test
-    fun `MORTGAGE_PROPERTY rejects non-current player`() {
+    fun `MORTGAGE_PROPERTY allows non-current player to mortgage their property`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 1500))
         gameState.currentPlayerIndex = 0
         gameState.phase = GamePhase.BUYING
 
+        val field = gameState.fields[1] as PropertyField
+        field.ownerId = "host-2"
+        gameState.players.find { it.id == "host-2" }!!.ownedPropertyIds.add(field.id)
+
         controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-2", action = "MORTGAGE_PROPERTY",
-            payload = mutableMapOf("fieldId" to "1")))
+            payload = mutableMapOf("fieldId" to field.id.toString())))
 
         val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("not your turn"))
+        assertEquals("PROPERTY_MORTGAGED", event.event)
+        assertTrue(field.isMortgaged)
     }
 
     @Test
-    fun `UNMORTGAGE_PROPERTY rejects non-current player`() {
+    fun `UNMORTGAGE_PROPERTY allows non-current player to unmortgage their property`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 1500))
         gameState.currentPlayerIndex = 0
         gameState.phase = GamePhase.BUYING
 
+        val field = gameState.fields[1] as PropertyField
+        field.ownerId = "host-2"
+        field.isMortgaged = true
+        gameState.players.find { it.id == "host-2" }!!.ownedPropertyIds.add(field.id)
+
         controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-2", action = "UNMORTGAGE_PROPERTY",
-            payload = mutableMapOf("fieldId" to "1")))
+            payload = mutableMapOf("fieldId" to field.id.toString())))
 
         val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("not your turn"))
+        assertEquals("PROPERTY_UNMORTGAGED", event.event)
+        assertFalse(field.isMortgaged)
     }
 
     @Test
