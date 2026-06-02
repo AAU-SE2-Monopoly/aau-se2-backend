@@ -560,6 +560,11 @@ class WebSocketBrokerController(
             return
         }
 
+        if (!canBuyHotelEvenly(gameState, property)) {
+            sendGameError(action, gameState, "All properties in the color set must have 4 houses or a hotel before buying a hotel.")
+            return
+        }
+
         if (player.money < property.hotelCost) {
             sendGameError(action, gameState, "Not enough money to buy a hotel.")
             return
@@ -634,6 +639,11 @@ class WebSocketBrokerController(
             return
         }
 
+        if (!canSellHotelEvenly(gameState, property)) {
+            sendGameError(action, gameState, "Cannot sell hotel — all properties in the color set must have at least 4 houses or a hotel.")
+            return
+        }
+
         property.hasHotel = false
         property.houses = 4
         player.money += property.hotelCost / 2
@@ -684,6 +694,28 @@ class WebSocketBrokerController(
         val minHouses = colorSet.minOf { it.houses }
 
         return property.houses == minHouses
+    }
+
+    private fun canBuyHotelEvenly(
+        gameState: GameState,
+        property: PropertyField
+    ): Boolean {
+        val colorSet = gameState.fields
+            .filterIsInstance<PropertyField>()
+            .filter { it.color == property.color && it.id != property.id }
+
+        return colorSet.all { it.houses == 4 || it.hasHotel }
+    }
+
+    private fun canSellHotelEvenly(
+        gameState: GameState,
+        property: PropertyField
+    ): Boolean {
+        val colorSet = gameState.fields
+            .filterIsInstance<PropertyField>()
+            .filter { it.color == property.color && it.id != property.id }
+
+        return colorSet.all { it.houses >= 4 || it.hasHotel }
     }
 
     private fun isColorSetMortgageFree(

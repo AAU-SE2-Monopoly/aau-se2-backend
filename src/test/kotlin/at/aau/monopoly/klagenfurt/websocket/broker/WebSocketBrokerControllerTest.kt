@@ -2069,6 +2069,15 @@ class WebSocketBrokerControllerTest {
         property.houses = 0
         player.ownedPropertyIds.add(property.id)
 
+        val siblings = gameState.fields
+            .filterIsInstance<PropertyField>()
+            .filter { it.color == property.color && it.id != property.id }
+        siblings.forEach {
+            it.ownerId = player.id
+            it.houses = 4
+            player.ownedPropertyIds.add(it.id)
+        }
+
         controller.handleAction(
             GameAction(
                 gameId = gameState.gameId,
@@ -3017,6 +3026,15 @@ class WebSocketBrokerControllerTest {
         prop.ownerId = "host-1"
         prop.hasHotel = true
         gameState.players[0].ownedPropertyIds.add(1)
+
+        val siblings = gameState.fields
+            .filterIsInstance<PropertyField>()
+            .filter { it.color == prop.color && it.id != prop.id }
+        siblings.forEach {
+            it.ownerId = "host-1"
+            it.houses = 4
+            gameState.players[0].ownedPropertyIds.add(it.id)
+        }
 
         controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "SELL_HOTEL",
             payload = mutableMapOf("fieldId" to "1")))
