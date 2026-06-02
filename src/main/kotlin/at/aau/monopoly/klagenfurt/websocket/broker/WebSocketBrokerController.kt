@@ -13,6 +13,7 @@ import at.aau.monopoly.klagenfurt.model.field.ChanceField
 import at.aau.monopoly.klagenfurt.model.field.CommunityChestField
 import at.aau.monopoly.klagenfurt.model.field.PropertyField
 import at.aau.monopoly.klagenfurt.model.field.RailroadField
+import at.aau.monopoly.klagenfurt.model.field.TaxField
 import at.aau.monopoly.klagenfurt.model.field.UtilityField
 import org.slf4j.LoggerFactory
 import org.springframework.context.event.EventListener
@@ -935,36 +936,45 @@ class WebSocketBrokerController(
         player.position = newPos
     }
 
-    private fun movePlayerAndHandleGoToJail(
-        gameState: GameState,
-        player: Player,
-        rollTotal: Int,
-        message: String
-    ): String {
-        var eventMessage = message
+     private fun movePlayerAndHandleGoToJail(
+         gameState: GameState,
+         player: Player,
+         rollTotal: Int,
+         message: String
+     ): String {
+         var eventMessage = message
 
-        val oldPos = player.position
-        val newPos = (oldPos + rollTotal) % gameState.fields.size
+         val oldPos = player.position
+         val newPos = (oldPos + rollTotal) % gameState.fields.size
 
-        if (newPos < oldPos) {
-            player.money += 200
-            eventMessage += " and passed Go (+200€)."
-        }
+         if (newPos < oldPos) {
+             player.money += 200
+             eventMessage += " and passed Go (+200€)."
+         }
 
-        player.position = newPos
-        gameState.phase = GamePhase.BUYING
+         player.position = newPos
+         gameState.phase = GamePhase.BUYING
 
-        if (newPos == 30) {
-            player.inJail = true
-            player.position = 10
-            player.jailTurns = 0
-            player.consecutiveDoublets = 0
-            eventMessage += " Landed on Go To Jail!"
-            gameState.phase = GamePhase.TURN_END
-        }
+         if (newPos == 30) {
+             player.inJail = true
+             player.position = 10
+             player.jailTurns = 0
+             player.consecutiveDoublets = 0
+             eventMessage += " Landed on Go To Jail!"
+             gameState.phase = GamePhase.TURN_END
+         }
 
-        return eventMessage
-    }
+         // Handle TaxField
+         val field = gameState.fields[newPos]
+         if (field is TaxField) {
+             val taxAmount = field.amount
+             player.money -= taxAmount
+             gameState.freeParkingMoney += taxAmount
+             eventMessage += " Landed on ${field.name} and paid ${taxAmount}€ in taxes."
+         }
+
+         return eventMessage
+     }
 
     private fun handleBuyProperty(
         action: GameAction,
