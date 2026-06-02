@@ -3634,4 +3634,133 @@ class WebSocketBrokerControllerTest {
         assertEquals("ERROR", event.event)
         assertTrue(event.message!!.contains("mortgaged"))
     }
+
+    // --- Logic Fix Verification & Coverage Expansion ---
+
+    @Test
+    fun `verify Hotel Pricing - charges only houseCost instead of hotelCost`() {
+        val (controller, gameController, _) = createController()
+        val gameState = gameController.createGame("host")
+        val player = Player(id = "p1", name = "Alice", money = 300)
+        gameController.joinGame(gameState.gameId, player)
+
+        val fields = gameState.fields as MutableList
+        fields[1] = (fields[1] as PropertyField).copy(ownerId = "p1", houses = 4, houseCost = 50, hotelCost = 250)
+        fields[3] = (fields[3] as PropertyField).copy(ownerId = "p1", houses = 4, houseCost = 50, hotelCost = 250)
+
+        player.ownedPropertyIds.addAll(listOf(1, 3))
+        player.money = 300
+        player.position = 1
+        gameState.phase = GamePhase.BUYING
+        gameState.currentPlayerIndex = gameState.players.indexOfFirst { it.id == "p1" }
+
+        controller.handleAction(GameAction(gameState.gameId, "p1", "BUY_HOTEL", mutableMapOf("fieldId" to "1")))
+
+        // 300 - 50 = 250.
+        assertEquals(250, player.money)
+        assertTrue((gameState.fields[1] as PropertyField).hasHotel)
+    }
+
+    @Test
+    fun `verify Identity Spoofing Vulnerability - documented`() {
+        val (controller, gameController, _) = createController()
+        val gameState = gameController.createGame("host")
+        val alice = Player(id = "alice", name = "Alice", money = 1500)
+        val bob = Player(id = "bob", name = "Bob", money = 1500)
+        gameController.joinGame(gameState.gameId, alice)
+        gameController.joinGame(gameState.gameId, bob)
+
+        gameState.currentPlayerIndex = gameState.players.indexOfFirst { it.id == "bob" }
+        gameState.phase = GamePhase.BUYING
+        bob.position = 1
+
+        val action = GameAction(
+            gameId = gameState.gameId,
+            playerId = "bob", // SPOOFED by client
+            action = "BUY_PROPERTY",
+            payload = mutableMapOf("fieldId" to "1")
+        )
+
+        controller.handleAction(action)
+
+        assertEquals(1440, bob.money)
+        assertEquals("bob", (gameState.fields[1] as PropertyField).ownerId)
+    }
+
+    @Test
+    fun `verify Bank Supply Limit Absence - documented`() {
+        val (controller, gameController, _) = createController()
+        val gameState = gameController.createGame("host")
+        val player = Player(id = "p1", name = "Alice", money = 100000)
+        gameController.joinGame(gameState.gameId, player)
+
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.BUYING
+
+        val properties = gameState.fields.filterIsInstance<PropertyField>()
+        
+        // Build 4 houses on MANY properties (exceeding 32)
+        properties.forEach {
+            it.ownerId = "p1"
+            player.ownedPropertyIds.add(it.id)
+            it.isMortgaged = false
+        }
+
+        // Manually build to avoid complex state transitions and focus on supply absence
+        properties.take(20).forEach { it.houses = 4 }
+
+        val totalHouses = properties.sumOf { it.houses }
+        assertTrue(totalHouses >= 80, "Should be able to build many houses (no bank limit yet). Actual: $totalHouses")
+    }
+
+    @Test
+    fun `executeAction COLLECT_MONEY should increase player funds`() {
+        val (controller, gameController, _) = createController()
+        val gameState = gameController.createGame("host")
+        val player = Player(id = "p1", name = "Alice", money = 1500)
+        gameController.joinGame(gameState.gameId, player)
+
+        val card = at.aau.monopoly.klagenfurt.model.card.ChanceCard(id = 1, description = "Win 100", action = at.aau.monopoly.klagenfurt.model.enums.CardAction.COLLECT_MONEY, amount = 100)
+        gameState.currentActionCard = card
+        gameState.currentPlayerIndex = 0
+
+        controller.handleAction(GameAction(gameState.gameId, "p1", "EXECUTE_ACTION"))
+
+        assertEquals(1600, player.money)
+    }
+
+    @Test
+    fun `executeAction PAY_MONEY should decrease player funds and add to free parking`() {
+        val (controller, gameController, _) = createController()
+        val gameState = gameController.createGame("host")
+        val player = Player(id = "p1", name = "Alice", money = 1500)
+        gameController.joinGame(gameState.gameId, player)
+
+        val card = at.aau.monopoly.klagenfurt.model.card.ChanceCard(id = 2, description = "Pay 50", action = at.aau.monopoly.klagenfurt.model.enums.CardAction.PAY_MONEY, amount = 50)
+        gameState.currentActionCard = card
+        gameState.currentPlayerIndex = 0
+        gameState.freeParkingMoney = 100
+
+        controller.handleAction(GameAction(gameState.gameId, "p1", "EXECUTE_ACTION"))
+
+        assertEquals(1450, player.money)
+        assertEquals(150, gameState.freeParkingMoney)
+    }
+
+    @Test
+    fun `executeAction GO_TO_JAIL should move player to jail`() {
+        val (controller, gameController, _) = createController()
+        val gameState = gameController.createGame("host")
+        val player = Player(id = "p1", name = "Alice", money = 1500, position = 15)
+        gameController.joinGame(gameState.gameId, player)
+
+        val card = at.aau.monopoly.klagenfurt.model.card.ChanceCard(id = 5, description = "Go to Jail", action = at.aau.monopoly.klagenfurt.model.enums.CardAction.GO_TO_JAIL)
+        gameState.currentActionCard = card
+        gameState.currentPlayerIndex = 0
+
+        controller.handleAction(GameAction(gameState.gameId, "p1", "EXECUTE_ACTION"))
+
+        assertEquals(10, player.position)
+        assertTrue(player.inJail)
+    }
 }

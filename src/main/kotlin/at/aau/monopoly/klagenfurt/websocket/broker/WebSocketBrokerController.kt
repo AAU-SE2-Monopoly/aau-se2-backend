@@ -586,11 +586,6 @@ class WebSocketBrokerController(
         action: GameAction,
         gameState: GameState
     ) {
-        if (gameState.phase == GamePhase.PAYING_RENT) {
-            sendGameError(action, gameState, "Cannot sell houses while rent is due.")
-            return
-        }
-
         val property = getValidatedProperty(action, gameState) ?: return
         val player = gameState.players.find { it.id == action.playerId } ?: return
 
@@ -631,11 +626,6 @@ class WebSocketBrokerController(
         action: GameAction,
         gameState: GameState
     ) {
-        if (gameState.phase == GamePhase.PAYING_RENT) {
-            sendGameError(action, gameState, "Cannot sell hotels while rent is due.")
-            return
-        }
-
         val property = getValidatedProperty(action, gameState) ?: return
         val player = gameState.players.find { it.id == action.playerId } ?: return
 
