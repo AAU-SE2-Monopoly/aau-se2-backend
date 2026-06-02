@@ -3506,4 +3506,132 @@ class WebSocketBrokerControllerTest {
         assertEquals("HOUSE_BOUGHT", event.event)
         assertEquals(1, prop1.houses)
     }
+
+    @Test
+    fun `buyHotel should fail when sibling has less than four houses and no hotel`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500))
+        gameState.phase = GamePhase.BUYING
+        val player = gameState.players[0]
+        val prop1 = gameState.fields[1] as PropertyField
+        val prop3 = gameState.fields[3] as PropertyField
+        prop1.ownerId = "host-1"; prop1.houses = 4
+        prop3.ownerId = "host-1"; prop3.houses = 2 // sibling underdeveloped
+        player.ownedPropertyIds.addAll(listOf(1, 3))
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "BUY_HOTEL",
+            payload = mutableMapOf("fieldId" to "1")))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("4 houses or a hotel"))
+    }
+
+    @Test
+    fun `buyHotel should succeed when sibling already has a hotel`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500))
+        gameState.phase = GamePhase.BUYING
+        val player = gameState.players[0]
+        val prop1 = gameState.fields[1] as PropertyField
+        val prop3 = gameState.fields[3] as PropertyField
+        prop1.ownerId = "host-1"; prop1.houses = 4
+        prop3.ownerId = "host-1"; prop3.hasHotel = true; prop3.houses = 0
+        player.ownedPropertyIds.addAll(listOf(1, 3))
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "BUY_HOTEL",
+            payload = mutableMapOf("fieldId" to "1")))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("HOTEL_BOUGHT", event.event)
+        assertTrue(prop1.hasHotel)
+    }
+
+    @Test
+    fun `sellHotel should fail when sibling has less than four houses and no hotel`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500))
+        gameState.phase = GamePhase.ROLLING
+        val player = gameState.players[0]
+        val prop1 = gameState.fields[1] as PropertyField
+        val prop3 = gameState.fields[3] as PropertyField
+        prop1.ownerId = "host-1"; prop1.hasHotel = true; prop1.houses = 0
+        prop3.ownerId = "host-1"; prop3.houses = 2 // sibling underdeveloped
+        player.ownedPropertyIds.addAll(listOf(1, 3))
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "SELL_HOTEL",
+            payload = mutableMapOf("fieldId" to "1")))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("at least 4 houses or a hotel"))
+    }
+
+    @Test
+    fun `sellHotel should succeed when sibling has four houses`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500))
+        gameState.phase = GamePhase.ROLLING
+        val player = gameState.players[0]
+        val prop1 = gameState.fields[1] as PropertyField
+        val prop3 = gameState.fields[3] as PropertyField
+        prop1.ownerId = "host-1"; prop1.hasHotel = true; prop1.houses = 0
+        prop3.ownerId = "host-1"; prop3.houses = 4
+        player.ownedPropertyIds.addAll(listOf(1, 3))
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "SELL_HOTEL",
+            payload = mutableMapOf("fieldId" to "1")))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("HOTEL_SOLD", event.event)
+        assertFalse(prop1.hasHotel)
+        assertEquals(4, prop1.houses)
+    }
+
+    @Test
+    fun `sellHotel should succeed when sibling also has a hotel`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500))
+        gameState.phase = GamePhase.ROLLING
+        val player = gameState.players[0]
+        val prop1 = gameState.fields[1] as PropertyField
+        val prop3 = gameState.fields[3] as PropertyField
+        prop1.ownerId = "host-1"; prop1.hasHotel = true; prop1.houses = 0
+        prop3.ownerId = "host-1"; prop3.hasHotel = true; prop3.houses = 0
+        player.ownedPropertyIds.addAll(listOf(1, 3))
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "SELL_HOTEL",
+            payload = mutableMapOf("fieldId" to "1")))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("HOTEL_SOLD", event.event)
+        assertFalse(prop1.hasHotel)
+        assertEquals(4, prop1.houses)
+    }
+
+    @Test
+    fun `buyHotel should fail when sibling is mortgaged`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500))
+        gameState.phase = GamePhase.BUYING
+        val player = gameState.players[0]
+        val prop1 = gameState.fields[1] as PropertyField
+        val prop3 = gameState.fields[3] as PropertyField
+        prop1.ownerId = "host-1"; prop1.houses = 4
+        prop3.ownerId = "host-1"; prop3.houses = 4; prop3.isMortgaged = true
+        player.ownedPropertyIds.addAll(listOf(1, 3))
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "BUY_HOTEL",
+            payload = mutableMapOf("fieldId" to "1")))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("mortgaged"))
+    }
 }
