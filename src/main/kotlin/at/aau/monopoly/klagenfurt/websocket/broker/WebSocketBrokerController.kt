@@ -26,6 +26,7 @@ import at.aau.monopoly.klagenfurt.service.PaymentService
 import at.aau.monopoly.klagenfurt.service.RentCalculator
 import kotlin.math.ceil
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.context.event.EventListener
 import org.springframework.messaging.handler.annotation.MessageMapping
 import org.springframework.messaging.simp.SimpMessagingTemplate
@@ -40,6 +41,10 @@ class WebSocketBrokerController(
     private val messagingTemplate: SimpMessagingTemplate,
     private val gameController: GameController
 ) {
+
+    // ═══ DEBUG BEGIN ═══
+    @Value("\${app.debug:false}") private val debugMode: Boolean = false
+    // ═══ DEBUG END ═══
 
     private val gameLocks = ConcurrentHashMap<String, Any>()
 
@@ -235,10 +240,22 @@ class WebSocketBrokerController(
 
                 "DECLARE_BANKRUPTCY" -> handleDeclareBankruptcy(action, gameState)
 
-                /** DEBUG remove this block of code to remove */
-                "DEBUG_FORWARD_GAME" -> handleDebugForwardGame(action, gameState)
-                /** DEBUG remove this block of code to remove */
-                "DEBUG_SETUP_BANKRUPTCY" -> handleDebugSetupBankruptcy(action, gameState)
+                // ═══ DEBUG BEGIN ═══
+                "DEBUG_FORWARD_GAME" -> {
+                    if (!debugMode) {
+                        sendGameError(action, gameState, "Debug actions are disabled.")
+                    } else {
+                        handleDebugForwardGame(action, gameState)
+                    }
+                }
+                "DEBUG_SETUP_BANKRUPTCY" -> {
+                    if (!debugMode) {
+                        sendGameError(action, gameState, "Debug actions are disabled.")
+                    } else {
+                        handleDebugSetupBankruptcy(action, gameState)
+                    }
+                }
+                // ═══ DEBUG END ═══
 
                 else -> {
                     messagingTemplate.convertAndSend(
@@ -1219,7 +1236,8 @@ class WebSocketBrokerController(
             }
     }
 
-    /** DEBUG remove this block of code to remove */
+    // ═══ DEBUG BEGIN ═══
+
     private fun handleDebugForwardGame(
         action: GameAction,
         gameState: GameState
@@ -1287,7 +1305,6 @@ class WebSocketBrokerController(
         )
     }
 
-    /** DEBUG remove this block of code to remove */
     private fun handleDebugSetupBankruptcy(
         action: GameAction,
         gameState: GameState
@@ -1323,6 +1340,8 @@ class WebSocketBrokerController(
             "DEBUG: bankruptcy setup active."
         )
     }
+
+    // ═══ DEBUG END ═══
 
     private fun recomputeCanPayAfterAssets(gameState: GameState) {
         val pending = gameState.pendingPayment ?: return
