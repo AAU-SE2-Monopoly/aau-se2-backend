@@ -3763,4 +3763,135 @@ class WebSocketBrokerControllerTest {
         assertEquals(10, player.position)
         assertTrue(player.inJail)
     }
+
+    @Test
+    fun `resolveLandingEffects skips rent when property is mortgaged`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame("host")
+        val owner = Player(id = "p1", name = "Alice", money = 1500)
+        val lander = Player(id = "p2", name = "Bob", money = 1500, position = 0)
+        gameController.joinGame(gameState.gameId, owner)
+        gameController.joinGame(gameState.gameId, lander)
+
+        val field = gameState.fields[1] as PropertyField
+        field.ownerId = "p1"
+        field.isMortgaged = true
+        owner.ownedPropertyIds.add(field.id)
+
+        gameState.currentPlayerIndex = gameState.players.indexOfFirst { it.id == "p2" }
+        gameState.phase = GamePhase.ROLLING
+        lander.position = 1
+
+        controller.handleAction(GameAction(gameState.gameId, "p2", "ROLL_DICE",
+            payload = mutableMapOf("cheat" to "true")))
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals(GamePhase.BUYING, gameState.phase)
+        assertNull(gameState.pendingPayment)
+    }
+
+    @Test
+    fun `resolveLandingEffects triggers RENT_DUE when landing on owned railroad`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame("host")
+        val owner = Player(id = "p1", name = "Alice", money = 1500)
+        val lander = Player(id = "p2", name = "Bob", money = 1500, position = 0)
+        gameController.joinGame(gameState.gameId, owner)
+        gameController.joinGame(gameState.gameId, lander)
+
+        val rrField = gameState.fields.first { it is RailroadField }
+        (rrField as RailroadField).ownerId = "p1"
+        owner.ownedPropertyIds.add(rrField.id)
+        val rrPosition = rrField.id
+
+        gameState.currentPlayerIndex = gameState.players.indexOfFirst { it.id == "p2" }
+        gameState.phase = GamePhase.ROLLING
+        lander.position = (rrPosition - 12 + 40) % 40
+
+        controller.handleAction(GameAction(gameState.gameId, "p2", "ROLL_DICE",
+            payload = mutableMapOf("cheat" to "true")))
+
+        val events = captureMessages(messagingTemplate, 2)
+        val rentEvent = events.find { (it.second as? GameEvent)?.event == GameEvent.RENT_DUE }
+        assertNotNull(rentEvent, "Expected RENT_DUE event when landing on owned railroad")
+        assertEquals(GamePhase.PAYING_RENT, gameState.phase)
+        assertNotNull(gameState.pendingPayment)
+        assertEquals(25, gameState.pendingPayment!!.amount)
+    }
+
+    @Test
+    fun `resolveLandingEffects triggers RENT_DUE when landing on owned utility`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame("host")
+        val owner = Player(id = "p1", name = "Alice", money = 1500)
+        val lander = Player(id = "p2", name = "Bob", money = 1500, position = 0)
+        gameController.joinGame(gameState.gameId, owner)
+        gameController.joinGame(gameState.gameId, lander)
+
+        val utField = gameState.fields.first { it is UtilityField }
+        (utField as UtilityField).ownerId = "p1"
+        owner.ownedPropertyIds.add(utField.id)
+        val utPosition = utField.id
+
+        gameState.currentPlayerIndex = gameState.players.indexOfFirst { it.id == "p2" }
+        gameState.phase = GamePhase.ROLLING
+        lander.position = (utPosition - 12 + 40) % 40
+
+        controller.handleAction(GameAction(gameState.gameId, "p2", "ROLL_DICE",
+            payload = mutableMapOf("cheat" to "true")))
+
+        val events = captureMessages(messagingTemplate, 2)
+        val rentEvent = events.find { (it.second as? GameEvent)?.event == GameEvent.RENT_DUE }
+        assertNotNull(rentEvent, "Expected RENT_DUE event when landing on owned utility")
+        assertEquals(GamePhase.PAYING_RENT, gameState.phase)
+        assertNotNull(gameState.pendingPayment)
+    }
+
+    @Test
+    fun `resolveLandingEffects skips rent when property owner is eliminated`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame("host")
+        val owner = Player(id = "p1", name = "Alice", money = 1500, eliminated = true)
+        val lander = Player(id = "p2", name = "Bob", money = 1500, position = 0)
+        gameController.joinGame(gameState.gameId, owner)
+        gameController.joinGame(gameState.gameId, lander)
+
+        val field = gameState.fields[1] as PropertyField
+        field.ownerId = "p1"
+        owner.ownedPropertyIds.add(field.id)
+
+        gameState.currentPlayerIndex = gameState.players.indexOfFirst { it.id == "p2" }
+        gameState.phase = GamePhase.ROLLING
+        lander.position = 1
+
+        controller.handleAction(GameAction(gameState.gameId, "p2", "ROLL_DICE",
+            payload = mutableMapOf("cheat" to "true")))
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals(GamePhase.BUYING, gameState.phase)
+        assertNull(gameState.pendingPayment)
+    }
+
+    @Test
+    fun `resolveLandingEffects skips rent when landing on own property`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame("host")
+        val owner = Player(id = "p1", name = "Alice", money = 1500, position = 0)
+        gameController.joinGame(gameState.gameId, owner)
+
+        val field = gameState.fields[1] as PropertyField
+        field.ownerId = "p1"
+        owner.ownedPropertyIds.add(field.id)
+
+        gameState.currentPlayerIndex = gameState.players.indexOfFirst { it.id == "p1" }
+        gameState.phase = GamePhase.ROLLING
+        owner.position = 1
+
+        controller.handleAction(GameAction(gameState.gameId, "p1", "ROLL_DICE",
+            payload = mutableMapOf("cheat" to "true")))
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals(GamePhase.BUYING, gameState.phase)
+        assertNull(gameState.pendingPayment)
+    }
 }

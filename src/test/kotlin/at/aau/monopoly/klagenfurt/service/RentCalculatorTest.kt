@@ -169,4 +169,28 @@ class RentCalculatorTest {
         val rent = RentCalculator.calculateUtilityRent(fields[0], fields, ownerId = "p1", diceTotal = 7)
         assertEquals(0, rent)
     }
+
+    @Test
+    fun `calculateRailroadRent counts mortgaged railroads toward multiplier`() {
+        val rr1 = railroadField(id = 1, ownerId = "p1")
+        val rr2 = railroadField(id = 2, ownerId = "p1")
+        val rr3 = railroadField(id = 3, ownerId = "p1")
+        rr2.isMortgaged = true
+        rr3.isMortgaged = true
+        val fields = listOf(rr1, rr2, rr3)
+
+        val rent = RentCalculator.calculateRailroadRent(fields[0], fields, ownerId = "p1")
+        assertEquals(100, rent)
+    }
+
+    @Test
+    fun `calculateUtilityRent counts mortgaged utilities toward multiplier`() {
+        val ut1 = utilityField(id = 1, ownerId = "p1")
+        val ut2 = utilityField(id = 2, ownerId = "p1")
+        ut2.isMortgaged = true
+        val fields = listOf(ut1, ut2)
+
+        val rent = RentCalculator.calculateUtilityRent(fields[0], fields, ownerId = "p1", diceTotal = 7)
+        assertEquals(70, rent)
+    }
 }
