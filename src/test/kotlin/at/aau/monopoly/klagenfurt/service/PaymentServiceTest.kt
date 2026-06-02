@@ -111,10 +111,10 @@ class PaymentServiceTest {
     }
 
     @Test
-    fun `sellHotel refuses when sibling has fewer than 4 houses`() {
+    fun `sellHotel refuses when sibling has fewer than 3 houses`() {
         val player = Player(id = "p1", name = "Alice")
         val field1 = propertyField(id = 1, color = PropertyColor.BROWN, ownerId = "p1", hasHotel = true)
-        val field2 = propertyField(id = 2, color = PropertyColor.BROWN, ownerId = "p1", houses = 3)
+        val field2 = propertyField(id = 2, color = PropertyColor.BROWN, ownerId = "p1", houses = 2)
         val fields = listOf(field1, field2)
 
         val beforeMoney = player.money
@@ -273,7 +273,6 @@ class PaymentServiceTest {
     @Test
     fun `sellHotel blocked when sibling has 0 houses`() {
         val player = Player(id = "p1", name = "Alice")
-        // Hotel on field1, field2 has 0 houses → can't sell hotel (sibling must have ≥4)
         val field1 = propertyField(id = 1, color = PropertyColor.BROWN, ownerId = "p1", hasHotel = true)
         val field2 = propertyField(id = 2, color = PropertyColor.BROWN, ownerId = "p1", houses = 0)
         val fields = listOf(field1, field2)
@@ -291,6 +290,19 @@ class PaymentServiceTest {
         // Hotel on field1, field2 has 4 houses → can sell hotel (sibling ≥4)
         val field1 = propertyField(id = 1, color = PropertyColor.BROWN, ownerId = "p1", hasHotel = true, hotelCost = 100)
         val field2 = propertyField(id = 2, color = PropertyColor.BROWN, ownerId = "p1", houses = 4)
+        val fields = listOf(field1, field2)
+
+        PaymentService.sellHotel(player, field1, fields)
+
+        assertFalse(field1.hasHotel)
+        assertEquals(4, field1.houses)
+    }
+
+    @Test
+    fun `sellHotel allowed when sibling has exactly 3 houses`() {
+        val player = Player(id = "p1", name = "Alice")
+        val field1 = propertyField(id = 1, color = PropertyColor.BROWN, ownerId = "p1", hasHotel = true, hotelCost = 100)
+        val field2 = propertyField(id = 2, color = PropertyColor.BROWN, ownerId = "p1", houses = 3)
         val fields = listOf(field1, field2)
 
         PaymentService.sellHotel(player, field1, fields)

@@ -9,27 +9,23 @@ import at.aau.monopoly.klagenfurt.model.field.UtilityField
 import kotlin.math.ceil
 
 object PaymentService {
+
+    private fun getPrice(field: OwnableField): Int = when (field) {
+        is PropertyField -> field.price
+        is RailroadField -> field.price
+        is UtilityField -> field.price
+        else -> error("Unsupported OwnableField type: ${field::class.simpleName}")
+    }
+
     fun mortgageProperty(player: Player, field: OwnableField): Player {
-        // Give player half the price (field must be PropertyField or Railroad/Utility with price property)
-        val price = when (field) {
-            is PropertyField -> field.price
-            is RailroadField -> field.price
-            is UtilityField -> field.price
-            else -> error("Unsupported OwnableField type: ${field::class.simpleName}")
-        }
+        val price = getPrice(field)
         field.isMortgaged = true
         player.money += price / 2
         return player
     }
 
     fun unmortgageProperty(player: Player, field: OwnableField): Player {
-        val price = when (field) {
-            is PropertyField -> field.price
-            is RailroadField -> field.price
-            is UtilityField -> field.price
-            else -> error("Unsupported OwnableField type: ${field::class.simpleName}")
-        }
-        // 10% interest, rounded up
+        val price = getPrice(field)
         val cost = ceil(price / 2.0 * 1.1).toInt()
         field.isMortgaged = false
         player.money -= cost
@@ -59,17 +55,16 @@ object PaymentService {
 
     /**
      * Sell the hotel on [field], reverting to 4 houses.
-     *  Enforces even-building rule — all other properties in the color group
-     * must have at least 4 houses (or a hotel). If the rule would be violated,
-     * returns [player] unchanged.
+     * Enforces even-building rule — siblings must have at least 3 houses
+     * (or a hotel), since after selling the property has 4 houses and the
+     * max allowed gap is 1. If the rule would be violated, returns [player] unchanged.
      */
     fun sellHotel(player: Player, field: PropertyField, allFields: List<Field>): Player {
         if (!field.hasHotel) return player
-        // Even building rule: all siblings must have at least 4 houses (or hotel)
         val siblings = allFields.filterIsInstance<PropertyField>()
             .filter { it.color == field.color && it.id != field.id && it.ownerId == player.id }
-        if (siblings.any { it.houses < 4 && !it.hasHotel }) {
-            return player // cannot sell hotel — others don't have enough buildings
+        if (siblings.any { it.houses < 3 && !it.hasHotel }) {
+            return player
         }
         field.hasHotel = false
         field.houses = 4 // revert to 4 houses
@@ -86,13 +81,7 @@ object PaymentService {
         var total = 0
         for (field in fields) {
             if (field is OwnableField && field.ownerId == player.id) {
-                // Mortgage value
-                val price = when (field) {
-                    is PropertyField -> field.price
-                    is RailroadField -> field.price
-                    is UtilityField -> field.price
-                    else -> 0
-                }
+                val price = getPrice(field)
                 if (!field.isMortgaged) {
                     total += price / 2
                 }

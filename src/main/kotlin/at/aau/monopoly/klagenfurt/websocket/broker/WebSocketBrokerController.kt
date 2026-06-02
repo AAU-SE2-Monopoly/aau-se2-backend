@@ -640,7 +640,7 @@ class WebSocketBrokerController(
         }
 
         if (!canSellHotelEvenly(gameState, property)) {
-            sendGameError(action, gameState, "Cannot sell hotel — all properties in the color set must have at least 4 houses or a hotel.")
+            sendGameError(action, gameState, "Cannot sell hotel — all properties in the color set must have at least 3 houses or a hotel.")
             return
         }
 
@@ -715,7 +715,7 @@ class WebSocketBrokerController(
             .filterIsInstance<PropertyField>()
             .filter { it.color == property.color && it.id != property.id }
 
-        return colorSet.all { it.houses >= 4 || it.hasHotel }
+        return colorSet.all { it.houses >= 3 || it.hasHotel }
     }
 
     private fun isColorSetMortgageFree(
