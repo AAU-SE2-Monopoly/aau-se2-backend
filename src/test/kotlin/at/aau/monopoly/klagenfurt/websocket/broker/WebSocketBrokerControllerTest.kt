@@ -134,7 +134,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
 
         controller.startGame(GameAction(gameId = gameState.gameId))
 
@@ -239,7 +239,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
         gameState.phase = GamePhase.BUYING
 
         controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "END_TURN"))
@@ -297,7 +297,7 @@ class WebSocketBrokerControllerTest {
         val waitingGame = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(waitingGame.gameId, Player(id = "host-1", name = "Alice"))
         val startedGame = gameController.createGame(hostPlayerId = "host-2")
-        gameController.joinGame(startedGame.gameId, Player(id = "host-2", name = "Bob"))
+        gameController.joinGame(startedGame.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee"))
         gameController.getGameState(startedGame.gameId)!!.advanceTurn()
 
         controller.listGames(GameAction())
@@ -467,8 +467,8 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
-        gameController.joinGame(gameState.gameId, Player(id = "player-3", name = "Charlie"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-3", name = "Charlie", iconId = "gti"))
 
         controller.getGameState(GameAction(gameId = gameState.gameId))
 
@@ -517,7 +517,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
 
         gameState.advanceTurn()
 
@@ -541,7 +541,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
         gameState.advanceTurn()
 
         controller.joinGame(
@@ -570,7 +570,7 @@ class WebSocketBrokerControllerTest {
         repeat(gameController.maxPlayersPerGame) { index ->
             gameController.joinGame(
                 gameState.gameId,
-                Player(id = "player-$index", name = "Player $index")
+                Player(id = "player-$index", name = "Player $index", iconId = "icon-$index")
             )
         }
 
@@ -637,7 +637,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
 
         controller.startGame(GameAction(gameId = gameState.gameId))
 
@@ -654,7 +654,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
         gameState.advanceTurn()
         gameState.phase = GamePhase.BUYING
 
@@ -677,7 +677,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
         gameState.phase = GamePhase.TURN_END
 
         controller.handleAction(
@@ -701,7 +701,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
         gameState.phase = GamePhase.BUYING
 
         controller.handleAction(
@@ -723,7 +723,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
         gameState.phase = GamePhase.BUYING
         gameState.lastDiceRoll = DiceRoll(3, 4)
         gameState.currentActionCard = ChanceCard(
@@ -975,7 +975,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
         gameState.advanceTurn()
 
         val wrongPlayerId = if (gameState.currentPlayer!!.id == "host-1") "player-2" else "host-1"
@@ -1043,7 +1043,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
         gameState.advanceTurn()
 
         val wrongPlayerId = if (gameState.currentPlayer!!.id == "host-1") "player-2" else "host-1"
@@ -1263,7 +1263,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500))
-        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 1500))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee", money = 1500))
 
         controller.handleAction(
             GameAction(
@@ -1418,7 +1418,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
 
         val card = ChanceCard(
             id = 99,
@@ -1449,7 +1449,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
         gameState.phase = GamePhase.BUYING
 
         gameState.currentActionCard = ChanceCard(
@@ -1478,7 +1478,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
         gameState.phase = GamePhase.BUYING
 
         controller.handleAction(
@@ -1703,7 +1703,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee"))
         gameState.currentPlayerIndex = -1
         gameState.advanceTurn()
         gameState.phase = GamePhase.BUYING
@@ -1792,7 +1792,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee"))
         gameState.currentPlayerIndex = -1
         gameState.advanceTurn()
 
@@ -1816,7 +1816,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee"))
         gameState.currentPlayerIndex = -1
         gameState.advanceTurn()
 
@@ -2549,7 +2549,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 500))
-        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 500))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee", money = 500))
         gameState.currentPlayerIndex = 0
         gameState.phase = GamePhase.PAYING_RENT
         gameState.pendingPayment = PendingPayment(
@@ -2582,7 +2582,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 50))
-        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 500))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee", money = 500))
         gameState.currentPlayerIndex = 0
         gameState.phase = GamePhase.PAYING_RENT
         gameState.pendingPayment = PendingPayment(
@@ -2612,7 +2612,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 500))
-        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 500))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee", money = 500))
         gameState.currentPlayerIndex = 0
         gameState.phase = GamePhase.PAYING_RENT
         gameState.pendingPayment = PendingPayment(
@@ -2708,7 +2708,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 500))
-        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 500))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee", money = 500))
         gameState.currentPlayerIndex = 0
         gameState.phase = GamePhase.PAYING_RENT
         gameState.pendingPayment = PendingPayment(
@@ -2736,7 +2736,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 10))
-        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 500))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee", money = 500))
         gameState.currentPlayerIndex = 0
         gameState.phase = GamePhase.PAYING_RENT
         gameState.pendingPayment = PendingPayment(
@@ -2771,7 +2771,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 10, getOutOfJailCards = 2))
-        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 500))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee", money = 500))
         gameState.currentPlayerIndex = 0
         gameState.phase = GamePhase.PAYING_RENT
         gameState.pendingPayment = PendingPayment(
@@ -2804,7 +2804,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 10))
-        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 500))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee", money = 500))
         gameState.currentPlayerIndex = 0
         gameState.phase = GamePhase.PAYING_RENT
         gameState.pendingPayment = PendingPayment(
@@ -2904,7 +2904,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee"))
         gameState.phase = GamePhase.PAYING_RENT
         gameState.pendingPayment = PendingPayment(amount = 100, source = PaymentSource.RENT, sourceFieldId = 1, creditorPlayerId = "host-2")
 
@@ -2921,7 +2921,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee"))
         gameState.phase = GamePhase.PAYING_RENT
         gameState.pendingPayment = PendingPayment(amount = 100, source = PaymentSource.RENT, sourceFieldId = 1, creditorPlayerId = "host-2")
 
@@ -2937,7 +2937,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 1500))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee", money = 1500))
         gameState.currentPlayerIndex = 0
         gameState.phase = GamePhase.BUYING
 
@@ -2958,7 +2958,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 1500))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee", money = 1500))
         gameState.currentPlayerIndex = 0
         gameState.phase = GamePhase.BUYING
 
@@ -2994,7 +2994,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 500))
-        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 500))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee", money = 500))
         gameState.phase = GamePhase.PAYING_RENT
         gameState.pendingPayment = PendingPayment(amount = 200, source = PaymentSource.RENT, sourceFieldId = 1,
             creditorPlayerId = "host-2")
@@ -3017,7 +3017,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 500))
-        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 500))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee", money = 500))
         gameState.phase = GamePhase.PAYING_RENT
         gameState.pendingPayment = PendingPayment(amount = 200, source = PaymentSource.RENT, sourceFieldId = 1,
             creditorPlayerId = "host-2")
@@ -3049,7 +3049,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 500))
-        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 500))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee", money = 500))
         gameState.phase = GamePhase.PAYING_RENT
         gameState.pendingPayment = PendingPayment(amount = 200, source = PaymentSource.RENT, sourceFieldId = 1,
             creditorPlayerId = "host-2")
@@ -3071,7 +3071,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 500))
-        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 500))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee", money = 500))
         gameState.phase = GamePhase.PAYING_RENT
         gameState.pendingPayment = PendingPayment(amount = 200, source = PaymentSource.RENT, sourceFieldId = 1,
             creditorPlayerId = "host-2")
@@ -4049,7 +4049,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame("host")
         gameController.joinGame(gameState.gameId, Player(id = "p1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "p2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "p2", name = "Bob", iconId = "woerthersee"))
         gameState.phase = GamePhase.BUYING
         gameState.currentPlayerIndex = 0
         Mockito.clearInvocations(messagingTemplate)
@@ -4068,7 +4068,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame("host")
         gameController.joinGame(gameState.gameId, Player(id = "p1", name = "Alice"))
-        gameController.joinGame(gameState.gameId, Player(id = "p2", name = "Bob"))
+        gameController.joinGame(gameState.gameId, Player(id = "p2", name = "Bob", iconId = "woerthersee"))
         gameState.phase = GamePhase.BUYING
         gameState.currentPlayerIndex = 0
         Mockito.clearInvocations(messagingTemplate)
@@ -4104,8 +4104,8 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 10))
-        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 500))
-        gameController.joinGame(gameState.gameId, Player(id = "host-3", name = "Charlie", money = 500))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee", money = 500))
+        gameController.joinGame(gameState.gameId, Player(id = "host-3", name = "Charlie", iconId = "gti", money = 500))
         gameState.currentPlayerIndex = 0
         gameState.phase = GamePhase.PAYING_RENT
         gameState.pendingPayment = PendingPayment(
@@ -4127,7 +4127,7 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 10))
-        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 500))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee", money = 500))
         gameState.currentPlayerIndex = 0
         gameState.phase = GamePhase.PAYING_RENT
         gameState.pendingPayment = PendingPayment(
