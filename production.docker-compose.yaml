@@ -4,4 +4,10 @@ services:
     restart: unless-stopped
     ports:
       - "53208:8080"
+    volumes:
+      # The app's working directory is /app (see Dockerfile), so the default
+      # project-relative "data" folder resolves to /app/data inside the container.
+      - monopoly-data:/app/data
 
+volumes:
+  monopoly-data:
