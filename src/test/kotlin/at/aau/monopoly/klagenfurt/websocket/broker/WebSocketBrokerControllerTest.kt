@@ -4098,4 +4098,47 @@ class WebSocketBrokerControllerTest {
         assertEquals("ERROR", event.event)
         assertTrue(event.message!!.contains("Debug actions are disabled"))
     }
+
+    @Test
+    fun `handleDeclareBankruptcy advances turn to next non-eliminated player`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 10))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 500))
+        gameController.joinGame(gameState.gameId, Player(id = "host-3", name = "Charlie", money = 500))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(
+            amount = 100, source = PaymentSource.RENT, sourceFieldId = 1, creditorPlayerId = "host-2"
+        )
+        val prop1 = gameState.fields[1] as PropertyField
+        prop1.ownerId = "host-1"; prop1.isMortgaged = true
+        gameState.players[0].ownedPropertyIds.add(1)
+
+        controller.handleAction(GameAction(gameState.gameId, "host-1", "DECLARE_BANKRUPTCY"))
+
+        assertTrue(gameState.players[0].eliminated)
+        assertEquals(1, gameState.currentPlayerIndex)
+        assertEquals("host-2", gameState.currentPlayer!!.id)
+    }
+
+    @Test
+    fun `handleDeclareBankruptcy sets bankruptcyPlayerId on state`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 10))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 500))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(
+            amount = 100, source = PaymentSource.RENT, sourceFieldId = 1, creditorPlayerId = "host-2"
+        )
+        val prop1 = gameState.fields[1] as PropertyField
+        prop1.ownerId = "host-1"; prop1.isMortgaged = true
+        gameState.players[0].ownedPropertyIds.add(1)
+
+        controller.handleAction(GameAction(gameState.gameId, "host-1", "DECLARE_BANKRUPTCY"))
+
+        assertEquals("host-1", gameState.bankruptcyPlayerId)
+    }
 }

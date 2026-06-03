@@ -1618,11 +1618,13 @@ class WebSocketBrokerController(
 
         player.eliminated = true
         gameState.endCurrentTurn()
+        gameState.advanceTurn()
         gameState.pendingPayment = null
         gameState.bankruptcyTotalAssets = totalAssetValue
         gameState.bankruptcyTotalDebt = totalDebt
         gameState.bankruptcyPropertiesCount = propertiesCount
         gameState.bankruptcyOwnedFieldIds = ownedFieldIds
+        gameState.bankruptcyPlayerId = player.id
 
         messagingTemplate.convertAndSend(
             "/topic/game/${action.gameId}",

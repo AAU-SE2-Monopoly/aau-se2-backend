@@ -32,7 +32,8 @@ data class GameState(
     var bankruptcyTotalAssets: Int = 0,
     var bankruptcyTotalDebt: Int = 0,
     var bankruptcyPropertiesCount: Int = 0,
-    var bankruptcyOwnedFieldIds: List<Int> = emptyList()
+    var bankruptcyOwnedFieldIds: List<Int> = emptyList(),
+    var bankruptcyPlayerId: String = ""
 ) {
     /** The player whose turn it currently is. */
     val currentPlayer: Player?
