@@ -43,7 +43,9 @@ class WebSocketBrokerController(
 ) {
 
     // ═══ DEBUG BEGIN ═══
-    @Value("\${app.debug:false}") private val debugMode: Boolean = false
+    @Value("\${app.debug:false}") private var debugMode: Boolean = false
+    /** For tests only. */
+    internal fun setDebugMode(enabled: Boolean) { debugMode = enabled }
     // ═══ DEBUG END ═══
 
     private val gameLocks = ConcurrentHashMap<String, Any>()
@@ -163,58 +165,9 @@ class WebSocketBrokerController(
             when (action.action) {
                 "ROLL_DICE" -> handleRollDice(action, gameState)
 
-                "PAY_JAIL_FINE" -> {
-                    if (!validateCurrentPlayerTurn(action, gameState)) return
-                    val player = gameState.currentPlayer!!
-                    if (!player.inJail) {
-                        messagingTemplate.convertAndSend("/topic/game/${action.gameId}", GameEvent(gameId = action.gameId, event = "ERROR", message = "You are not in jail."))
-                        return
-                    }
-                    if (player.money < 50) {
-                        messagingTemplate.convertAndSend("/topic/game/${action.gameId}", GameEvent(gameId = action.gameId, event = "ERROR", message = "Not enough money to pay the fine."))
-                        return
-                    }
-                    player.money -= 50
-                    player.inJail = false
-                    player.jailTurns = 0
-                    player.consecutiveDoublets = 0
-                    messagingTemplate.convertAndSend(
-                        "/topic/game/${action.gameId}",
-                        GameEvent(
-                            gameId = action.gameId,
-                            event = "JAIL_FINE_PAID",
-                            gameState = gameState,
-                            message = "${player.name} paid 50M to get out of jail."
-                        )
-                    )
-                }
+                "PAY_JAIL_FINE" -> handlePayJailFine(action, gameState)
 
-                "USE_JAIL_CARD" -> {
-                    if (!validateCurrentPlayerTurn(action, gameState)) return
-                    val player = gameState.currentPlayer!!
-                    if (!player.inJail) {
-                        messagingTemplate.convertAndSend("/topic/game/${action.gameId}", GameEvent(gameId = action.gameId, event = "ERROR", message = "You are not in jail."))
-                        return
-                    }
-                    if (player.getOutOfJailCards <= 0) {
-                        messagingTemplate.convertAndSend("/topic/game/${action.gameId}", GameEvent(gameId = action.gameId, event = "ERROR", message = "You do not have a Get Out of Jail Free card."))
-                        return
-                    }
-                    player.getOutOfJailCards -= 1
-                    player.inJail = false
-                    player.jailTurns = 0
-                    player.consecutiveDoublets = 0
-                    returnJailCardToDeck(gameState)
-                    messagingTemplate.convertAndSend(
-                        "/topic/game/${action.gameId}",
-                        GameEvent(
-                            gameId = action.gameId,
-                            event = "JAIL_CARD_USED",
-                            gameState = gameState,
-                            message = "${player.name} used a Get Out of Jail Free card."
-                        )
-                    )
-                }
+                "USE_JAIL_CARD" -> handleUseJailCard(action, gameState)
 
                 "END_TURN" -> handleEndTurn(action, gameState)
 
@@ -1186,54 +1139,119 @@ class WebSocketBrokerController(
         )
     }
 
+    private fun handlePayJailFine(
+        action: GameAction,
+        gameState: GameState
+    ) {
+        if (!validateCurrentPlayerTurn(action, gameState)) return
+        val player = gameState.currentPlayer!!
+        if (!player.inJail) {
+            sendGameError(action, gameState, "You are not in jail.")
+            return
+        }
+        if (player.money < 50) {
+            sendGameError(action, gameState, "Not enough money to pay the fine.")
+            return
+        }
+        player.money -= 50
+        player.inJail = false
+        player.jailTurns = 0
+        player.consecutiveDoublets = 0
+        sendGameEvent(
+            action,
+            gameState,
+            "JAIL_FINE_PAID",
+            "${player.name} paid 50M to get out of jail."
+        )
+    }
+
+    private fun handleUseJailCard(
+        action: GameAction,
+        gameState: GameState
+    ) {
+        if (!validateCurrentPlayerTurn(action, gameState)) return
+        val player = gameState.currentPlayer!!
+        if (!player.inJail) {
+            sendGameError(action, gameState, "You are not in jail.")
+            return
+        }
+        if (player.getOutOfJailCards <= 0) {
+            sendGameError(action, gameState, "You do not have a Get Out of Jail Free card.")
+            return
+        }
+        player.getOutOfJailCards -= 1
+        player.inJail = false
+        player.jailTurns = 0
+        player.consecutiveDoublets = 0
+        returnJailCardToDeck(gameState)
+        sendGameEvent(
+            action,
+            gameState,
+            "JAIL_CARD_USED",
+            "${player.name} used a Get Out of Jail Free card."
+        )
+    }
+
     private fun resolveLandingEffects(
         action: GameAction,
         gameState: GameState,
         player: Player
     ) {
         val landedField = gameState.fields.getOrNull(player.position) ?: return
+        handleOwnableFieldLanding(action, gameState, player, landedField)
+        handleFreeParkingLanding(action, gameState, player, landedField)
+    }
 
-        if (landedField is OwnableField) {
-            val ownerId = landedField.ownerId
-            if (ownerId != null && ownerId != player.id && !landedField.isMortgaged) {
-                val owner = gameState.players.find { it.id == ownerId }
-                if (owner != null && !owner.eliminated) {
-                        val rent = when (landedField) {
-                            is PropertyField -> RentCalculator.calculatePropertyRent(landedField, gameState.fields, ownerId)
-                            is RailroadField -> RentCalculator.calculateRailroadRent(landedField, gameState.fields, ownerId)
-                            is UtilityField -> {
-                                val diceTotal = gameState.lastDiceRoll?.total ?: 0
-                                RentCalculator.calculateUtilityRent(landedField, gameState.fields, ownerId, diceTotal)
-                            }
-                            else -> 0
-                        }
-
-                        if (rent > 0) {
-                            gameState.phase = GamePhase.PAYING_RENT
-                            gameState.pendingPayment = PendingPayment(
-                                amount = rent,
-                                source = PaymentSource.RENT,
-                                sourceFieldId = landedField.id,
-                                creditorPlayerId = ownerId,
-                                debtorCanPayAfterAssets = PaymentService.canPayAfterAssets(player, gameState.fields, rent)
-                            )
-                            messagingTemplate.convertAndSend(
-                                "/topic/game/${action.gameId}",
-                                GameEvent(gameId = action.gameId, event = GameEvent.RENT_DUE, gameState = gameState)
-                            )
-                        }
-                    }
-                }
+    private fun handleOwnableFieldLanding(
+        action: GameAction,
+        gameState: GameState,
+        player: Player,
+        landedField: Field
+    ) {
+        if (landedField !is OwnableField) return
+        val ownerId = landedField.ownerId
+        if (ownerId == null || ownerId == player.id || landedField.isMortgaged) return
+        val owner = gameState.players.find { it.id == ownerId }
+        if (owner == null || owner.eliminated) return
+        val rent = when (landedField) {
+            is PropertyField -> RentCalculator.calculatePropertyRent(landedField, gameState.fields, ownerId)
+            is RailroadField -> RentCalculator.calculateRailroadRent(landedField, gameState.fields, ownerId)
+            is UtilityField -> {
+                val diceTotal = gameState.lastDiceRoll?.total ?: 0
+                RentCalculator.calculateUtilityRent(landedField, gameState.fields, ownerId, diceTotal)
             }
+            else -> 0
+        }
+        if (rent > 0) {
+            gameState.phase = GamePhase.PAYING_RENT
+            gameState.pendingPayment = PendingPayment(
+                amount = rent,
+                source = PaymentSource.RENT,
+                sourceFieldId = landedField.id,
+                creditorPlayerId = ownerId,
+                debtorCanPayAfterAssets = PaymentService.canPayAfterAssets(player, gameState.fields, rent)
+            )
+            messagingTemplate.convertAndSend(
+                "/topic/game/${action.gameId}",
+                GameEvent(gameId = action.gameId, event = GameEvent.RENT_DUE, gameState = gameState)
+            )
+        }
+    }
 
-            if (landedField is FreeParkingField && gameState.freeParkingMoney > 0) {
-                player.money += gameState.freeParkingMoney
-                gameState.freeParkingMoney = 0
-                messagingTemplate.convertAndSend(
-                    "/topic/game/${action.gameId}",
-                    GameEvent(gameId = action.gameId, event = GameEvent.FREE_PARKING_COLLECTED, gameState = gameState)
-                )
-            }
+    private fun handleFreeParkingLanding(
+        action: GameAction,
+        gameState: GameState,
+        player: Player,
+        landedField: Field
+    ) {
+        if (landedField is FreeParkingField && gameState.freeParkingMoney > 0) {
+            player.money += gameState.freeParkingMoney
+            gameState.freeParkingMoney = 0
+            messagingTemplate.convertAndSend(
+                "/topic/game/${action.gameId}",
+                GameEvent(gameId = action.gameId, event = GameEvent.FREE_PARKING_COLLECTED, gameState = gameState)
+            )
+        }
     }
 
     // ═══ DEBUG BEGIN ═══

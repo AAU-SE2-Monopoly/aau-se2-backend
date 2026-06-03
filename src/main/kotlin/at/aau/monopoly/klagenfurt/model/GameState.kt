@@ -13,7 +13,7 @@ data class PendingPayment(
     val source: PaymentSource,
     val sourceFieldId: Int? = null,
     val creditorPlayerId: String? = null,
-    val debtorCanPayAfterAssets: Boolean = true
+    val debtorCanPayAfterAssets: Boolean = false
 )
 
 data class GameState(
