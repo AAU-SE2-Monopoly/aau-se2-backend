@@ -2981,4 +2981,70 @@ class WebSocketBrokerControllerTest {
         assertTrue(event.message!!.contains("No action card"))
     }
 
+    @Test
+    fun `handleAction REPORT_CHEATER success`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 1500, iconId = "woerthersee"))
+        
+        val cheater = gameState.players.find { it.id == "host-2" }!!
+        cheater.hasCheated = true
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "REPORT_CHEATER", payload = mutableMapOf("reportedPlayerId" to "host-2")))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("CHEATER_REPORTED", event.event)
+        
+        val reporter = gameState.players.find { it.id == "host-1" }!!
+        assertEquals(2000, reporter.money)
+        assertEquals(1000, cheater.money)
+        assertFalse(cheater.hasCheated)
+    }
+
+    @Test
+    fun `handleAction REPORT_CHEATER false accusation`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 1500, iconId = "woerthersee"))
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "REPORT_CHEATER", payload = mutableMapOf("reportedPlayerId" to "host-2")))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("CHEATER_REPORT_FAILED", event.event)
+        
+        val reporter = gameState.players.find { it.id == "host-1" }!!
+        val accused = gameState.players.find { it.id == "host-2" }!!
+        assertEquals(1000, reporter.money)
+        assertEquals(2000, accused.money)
+    }
+
+    @Test
+    fun `handleAction REPORT_CHEATER error handling`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 1500, iconId = "woerthersee"))
+
+        // Missing reportedPlayerId
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "REPORT_CHEATER", payload = mutableMapOf()))
+        var event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("missing"))
+
+        // Report self
+        Mockito.clearInvocations(messagingTemplate)
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "REPORT_CHEATER", payload = mutableMapOf("reportedPlayerId" to "host-1")))
+        event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("yourself"))
+
+        // Invalid reported player
+        Mockito.clearInvocations(messagingTemplate)
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "REPORT_CHEATER", payload = mutableMapOf("reportedPlayerId" to "ghost")))
+        event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("not found"))
+    }
 }
