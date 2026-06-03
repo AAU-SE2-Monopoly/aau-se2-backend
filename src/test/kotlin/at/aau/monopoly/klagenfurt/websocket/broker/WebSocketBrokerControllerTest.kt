@@ -496,7 +496,7 @@ class WebSocketBrokerControllerTest {
     fun `joinGame should include player in game state event`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
-        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "woerthersee"))
 
         controller.joinGame(
             GameAction(
@@ -596,7 +596,7 @@ class WebSocketBrokerControllerTest {
     fun `joinGame should normalize blank icon from payload to default`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
-        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "woerthersee"))
 
         controller.joinGame(
             GameAction(
@@ -2439,9 +2439,9 @@ class WebSocketBrokerControllerTest {
     fun `executeAction COLLECT_FROM_EACH should take money from each other player`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame()
-        val player1 = Player(id = "p1", name = "Alice", money = 500)
-        val player2 = Player(id = "p2", name = "Bob", money = 300)
-        val player3 = Player(id = "p3", name = "Charlie", money = 200)
+        val player1 = Player(id = "p1", name = "Alice", iconId = "lindwurm", money = 500)
+        val player2 = Player(id = "p2", name = "Bob", iconId = "woerthersee", money = 300)
+        val player3 = Player(id = "p3", name = "Charlie", iconId = "gti", money = 200)
         gameController.joinGame(gameState.gameId, player1)
         gameController.joinGame(gameState.gameId, player2)
         gameController.joinGame(gameState.gameId, player3)
@@ -2472,9 +2472,9 @@ class WebSocketBrokerControllerTest {
     fun `executeAction PAY_EACH_PLAYER should treat amount as per-player`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame()
-        val player1 = Player(id = "p1", name = "Alice", money = 500)
-        val player2 = Player(id = "p2", name = "Bob", money = 300)
-        val player3 = Player(id = "p3", name = "Charlie", money = 200)
+        val player1 = Player(id = "p1", name = "Alice", iconId = "lindwurm", money = 500)
+        val player2 = Player(id = "p2", name = "Bob", iconId = "woerthersee", money = 300)
+        val player3 = Player(id = "p3", name = "Charlie", iconId = "gti", money = 200)
         gameController.joinGame(gameState.gameId, player1)
         gameController.joinGame(gameState.gameId, player2)
         gameController.joinGame(gameState.gameId, player3)
@@ -3687,8 +3687,8 @@ class WebSocketBrokerControllerTest {
     fun `verify Identity Spoofing Vulnerability - documented`() {
         val (controller, gameController, _) = createController()
         val gameState = gameController.createGame("host")
-        val alice = Player(id = "alice", name = "Alice", money = 1500)
-        val bob = Player(id = "bob", name = "Bob", money = 1500)
+        val alice = Player(id = "alice", name = "Alice", iconId = "woerthersee", money = 1500)
+        val bob = Player(id = "bob", name = "Bob", iconId = "lindwurm", money = 1500)
         gameController.joinGame(gameState.gameId, alice)
         gameController.joinGame(gameState.gameId, bob)
 
@@ -3790,8 +3790,8 @@ class WebSocketBrokerControllerTest {
     fun `resolveLandingEffects skips rent when property is mortgaged`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame("host")
-        val owner = Player(id = "p1", name = "Alice", money = 1500)
-        val lander = Player(id = "p2", name = "Bob", money = 1500, position = 0)
+        val owner = Player(id = "p1", name = "Alice", iconId = "woerthersee", money = 1500)
+        val lander = Player(id = "p2", name = "Bob", iconId = "lindwurm", money = 1500, position = 0)
         gameController.joinGame(gameState.gameId, owner)
         gameController.joinGame(gameState.gameId, lander)
 
@@ -3816,8 +3816,8 @@ class WebSocketBrokerControllerTest {
     fun `resolveLandingEffects triggers RENT_DUE when landing on owned railroad`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame("host")
-        val owner = Player(id = "p1", name = "Alice", money = 1500)
-        val lander = Player(id = "p2", name = "Bob", money = 1500, position = 0)
+        val owner = Player(id = "p1", name = "Alice", iconId = "woerthersee", money = 1500)
+        val lander = Player(id = "p2", name = "Bob", iconId = "lindwurm", money = 1500, position = 0)
         gameController.joinGame(gameState.gameId, owner)
         gameController.joinGame(gameState.gameId, lander)
 
@@ -3845,8 +3845,8 @@ class WebSocketBrokerControllerTest {
     fun `resolveLandingEffects triggers RENT_DUE when landing on owned utility`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame("host")
-        val owner = Player(id = "p1", name = "Alice", money = 1500)
-        val lander = Player(id = "p2", name = "Bob", money = 1500, position = 0)
+        val owner = Player(id = "p1", name = "Alice", iconId = "woerthersee", money = 1500)
+        val lander = Player(id = "p2", name = "Bob", iconId = "lindwurm", money = 1500, position = 0)
         gameController.joinGame(gameState.gameId, owner)
         gameController.joinGame(gameState.gameId, lander)
 
@@ -3873,8 +3873,8 @@ class WebSocketBrokerControllerTest {
     fun `resolveLandingEffects skips rent when property owner is eliminated`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame("host")
-        val owner = Player(id = "p1", name = "Alice", money = 1500, eliminated = true)
-        val lander = Player(id = "p2", name = "Bob", money = 1500, position = 0)
+        val owner = Player(id = "p1", name = "Alice", iconId = "woerthersee", money = 1500, eliminated = true)
+        val lander = Player(id = "p2", name = "Bob", iconId = "lindwurm", money = 1500, position = 0)
         gameController.joinGame(gameState.gameId, owner)
         gameController.joinGame(gameState.gameId, lander)
 
