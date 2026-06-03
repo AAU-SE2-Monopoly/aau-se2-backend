@@ -8,6 +8,7 @@ enum class CardAction {
     GO_TO_JAIL,
     GET_OUT_OF_JAIL,
     PAY_EACH_PLAYER,
-    COLLECT_FROM_EACH
+    COLLECT_FROM_EACH,
+    PAY_PER_BUILDING
 }
 

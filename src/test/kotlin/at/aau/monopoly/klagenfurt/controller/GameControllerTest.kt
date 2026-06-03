@@ -1,6 +1,9 @@
 package at.aau.monopoly.klagenfurt.controller
 
+import at.aau.monopoly.klagenfurt.model.PaymentSource
+import at.aau.monopoly.klagenfurt.model.PendingPayment
 import at.aau.monopoly.klagenfurt.model.Player
+import at.aau.monopoly.klagenfurt.model.enums.GamePhase
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 
@@ -85,15 +88,28 @@ class GameControllerTest {
         repeat(controller.maxPlayersPerGame) { index ->
             controller.joinGame(
                 game.gameId,
-                Player(id = "player-$index", name = "Player $index")
+                Player(id = "player-$index", name = "Player $index", iconId = "icon-$index")
             )
         }
 
         val exception = assertThrows(IllegalArgumentException::class.java) {
-            controller.joinGame(game.gameId, Player(id = "overflow", name = "Overflow"))
+            controller.joinGame(game.gameId, Player(id = "overflow", name = "Overflow", iconId = "icon-overflow"))
         }
 
         assertTrue(exception.message!!.contains("already full"))
+    }
+
+    @Test
+    fun `joinGame should reject player with already taken icon`() {
+        val controller = GameController()
+        val game = controller.createGame()
+        controller.joinGame(game.gameId, Player(id = "1", name = "Alice", iconId = "ironman"))
+
+        val exception = assertThrows(IllegalArgumentException::class.java) {
+            controller.joinGame(game.gameId, Player(id = "2", name = "Bob", iconId = "ironman"))
+        }
+
+        assertTrue(exception.message!!.contains("already taken"))
     }
 
     @Test
@@ -242,14 +258,14 @@ class GameControllerTest {
     fun `joinGame should allow rejoin with same player id during InProgress (app restart)`() {
         val controller = GameController()
         val game = controller.createGame(hostPlayerId = "1")
-        controller.joinGame(game.gameId, Player(id = "1", name = "Alice"))
-        controller.joinGame(game.gameId, Player(id = "2", name = "Bob"))
+        controller.joinGame(game.gameId, Player(id = "1", name = "Alice", iconId = "icon1"))
+        controller.joinGame(game.gameId, Player(id = "2", name = "Bob", iconId = "icon2"))
         // Start the game — phase becomes ROLLING
         controller.getGameState(game.gameId)!!.advanceTurn()
 
         // Same player ID re-joining during InProgress should succeed silently.
         assertDoesNotThrow {
-            controller.joinGame(game.gameId, Player(id = "1", name = "AliceReconnect"))
+            controller.joinGame(game.gameId, Player(id = "1", name = "AliceReconnect", iconId = "icon1"))
         }
         val gameState = controller.getGameState(game.gameId)!!
         assertEquals(2, gameState.players.size)
@@ -260,13 +276,13 @@ class GameControllerTest {
     fun `joinGame should reject fresh player when game is InProgress`() {
         val controller = GameController()
         val game = controller.createGame(hostPlayerId = "1")
-        controller.joinGame(game.gameId, Player(id = "1", name = "Alice"))
-        controller.joinGame(game.gameId, Player(id = "2", name = "Bob"))
+        controller.joinGame(game.gameId, Player(id = "1", name = "Alice", iconId = "icon1"))
+        controller.joinGame(game.gameId, Player(id = "2", name = "Bob", iconId = "icon2"))
         // Start the game
         controller.getGameState(game.gameId)!!.advanceTurn()
 
         val exception = assertThrows(IllegalArgumentException::class.java) {
-            controller.joinGame(game.gameId, Player(id = "3", name = "Intruder"))
+            controller.joinGame(game.gameId, Player(id = "3", name = "Intruder", iconId = "icon3"))
         }
 
         assertTrue(exception.message!!.contains("not a participant"))
@@ -285,5 +301,49 @@ class GameControllerTest {
         assertEquals(game.gameId, closed.gameId)
         // Game should be removed
         assertNull(controller.getGameState(game.gameId))
+    }
+
+    @Test
+    fun `bankrupt player rejoin preserves eliminated state for spectating`() {
+        val controller = GameController()
+        val game = controller.createGame(hostPlayerId = "p1")
+        controller.joinGame(game.gameId, Player(id = "p1", name = "Alice", money = 0))
+        controller.joinGame(game.gameId, Player(id = "p2", name = "Bob", iconId = "woerthersee"))
+        game.players[0].eliminated = true
+
+        val rejoined = controller.joinGame(game.gameId, Player(id = "p1", name = "Alice"))
+
+        assertTrue(rejoined.players[0].eliminated)
+        assertEquals(0, rejoined.players[0].money)
+        assertEquals(2, rejoined.players.size)
+    }
+
+    @Test
+    fun `player with pending rent still owes after rejoin`() {
+        val controller = GameController()
+        val game = controller.createGame(hostPlayerId = "p1")
+        controller.joinGame(game.gameId, Player(id = "p1", name = "Alice"))
+        controller.joinGame(game.gameId, Player(id = "p2", name = "Bob", iconId = "woerthersee"))
+        game.phase = GamePhase.PAYING_RENT
+        game.pendingPayment = PendingPayment(amount = 200, source = PaymentSource.RENT,
+            sourceFieldId = 1, creditorPlayerId = "p2")
+
+        val rejoined = controller.joinGame(game.gameId, Player(id = "p1", name = "Alice"))
+
+        assertEquals(200, rejoined.pendingPayment?.amount)
+        assertEquals(GamePhase.PAYING_RENT, rejoined.phase)
+    }
+
+    @Test
+    fun `rejoin does not duplicate player in players list`() {
+        val controller = GameController()
+        val game = controller.createGame(hostPlayerId = "p1")
+        controller.joinGame(game.gameId, Player(id = "p1", name = "Alice"))
+        controller.joinGame(game.gameId, Player(id = "p2", name = "Bob", iconId = "woerthersee"))
+        game.players[0].eliminated = true
+
+        val rejoined = controller.joinGame(game.gameId, Player(id = "p1", name = "AliceRejoin"))
+        assertEquals(2, rejoined.players.size)
+        assertEquals("Alice", rejoined.players[0].name)
     }
 }

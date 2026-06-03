@@ -14,9 +14,9 @@ data class PropertyField(
     val rent: List<Int>,
     val houseCost: Int,
     val hotelCost: Int,
-    var ownerId: String? = null,
+    override var ownerId: String? = null,
     var houses: Int = 0,
     var hasHotel: Boolean = false,
-    var isMortgaged: Boolean = false
-) : Field(id, name, type)
+    override var isMortgaged: Boolean = false
+) : Field(id, name, type), OwnableField
 

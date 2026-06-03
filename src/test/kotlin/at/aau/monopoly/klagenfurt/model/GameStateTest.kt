@@ -92,27 +92,27 @@ class GameStateTest {
     }
 
     @Test
-    fun `advanceTurn should reset hasDrawnChanceCardThisTurn`() {
+    fun `advanceTurn should reset pendingPayment`() {
         val gameState = GameState(
             gameId = "game-1",
             fields = BoardFactory.createDefaultBoard(),
             players = mutableListOf(Player(id = "p1", name = "Alice"), Player(id = "p2", name = "Bob"))
         )
-        gameState.hasDrawnChanceCardThisTurn = true
+        gameState.pendingPayment = PendingPayment(50, PaymentSource.RENT, creditorPlayerId = "p1")
         gameState.advanceTurn()
-        assertFalse(gameState.hasDrawnChanceCardThisTurn)
+        assertNull(gameState.pendingPayment)
     }
 
     @Test
-    fun `advanceTurn should reset hasDrawnCommunityChestCardThisTurn`() {
+    fun `advanceTurn should keep pendingPayment null when none was set`() {
         val gameState = GameState(
             gameId = "game-1",
             fields = BoardFactory.createDefaultBoard(),
             players = mutableListOf(Player(id = "p1", name = "Alice"), Player(id = "p2", name = "Bob"))
         )
-        gameState.hasDrawnCommunityChestCardThisTurn = true
+
         gameState.advanceTurn()
-        assertFalse(gameState.hasDrawnCommunityChestCardThisTurn)
+        assertNull(gameState.pendingPayment)
     }
 
     @Test
@@ -235,5 +235,118 @@ class GameStateTest {
         assertEquals(0, gameState.currentPlayerIndex)
         assertEquals("Alice", gameState.currentPlayer?.name)
         assertEquals(GamePhase.TURN_END, gameState.phase)
+    }
+
+    @Test
+    fun `advanceTurn should return early when all players are bankrupt`() {
+        val players = mutableListOf(
+            Player(id = "1", name = "Alice", money = 0),
+            Player(id = "2", name = "Bob", money = 0)
+        )
+
+        val gameState = GameState(
+            gameId = "game-1",
+            fields = BoardFactory.createDefaultBoard(),
+            players = players,
+            currentPlayerIndex = 0,
+            phase = GamePhase.BUYING
+        )
+
+        gameState.advanceTurn()
+
+        // Phase should be FINISHED since all players are bankrupt
+        assertEquals(0, gameState.currentPlayerIndex)
+        assertEquals(GamePhase.FINISHED, gameState.phase)
+    }
+
+    @Test
+    fun `advanceTurn should skip a single bankrupt player`() {
+        val players = mutableListOf(
+            Player(id = "1", name = "Alice", money = 0, ownedPropertyIds = mutableListOf()),
+            Player(id = "2", name = "Bob", money = 500)
+        )
+
+        val gameState = GameState(
+            gameId = "game-1",
+            fields = BoardFactory.createDefaultBoard(),
+            players = players,
+            currentPlayerIndex = 0,
+            phase = GamePhase.BUYING
+        )
+
+        gameState.advanceTurn()
+
+        assertEquals(1, gameState.currentPlayerIndex)
+        assertEquals("Bob", gameState.currentPlayer?.name)
+        assertEquals(GamePhase.ROLLING, gameState.phase)
+    }
+
+    @Test
+    fun `advanceTurn should skip eliminated players`() {
+        val players = mutableListOf(
+            Player(id = "1", name = "Alice", money = 500),
+            Player(id = "2", name = "Bob", money = 0, ownedPropertyIds = mutableListOf())
+        )
+        players[1].eliminated = true
+
+        val gameState = GameState(
+            gameId = "game-1",
+            fields = BoardFactory.createDefaultBoard(),
+            players = players,
+            currentPlayerIndex = 0,
+            phase = GamePhase.BUYING
+        )
+
+        gameState.advanceTurn()
+
+        assertEquals(0, gameState.currentPlayerIndex)
+        assertEquals("Alice", gameState.currentPlayer?.name)
+        assertEquals(GamePhase.ROLLING, gameState.phase)
+    }
+
+    @Test
+    fun `advanceTurn continues normally after bankruptcy declaration`() {
+        val players = mutableListOf(
+            Player(id = "1", name = "Alice", money = 0, ownedPropertyIds = mutableListOf()),
+            Player(id = "2", name = "Bob", money = 500)
+        )
+        players[0].eliminated = true
+
+        val gameState = GameState(
+            gameId = "game-1",
+            fields = BoardFactory.createDefaultBoard(),
+            players = players,
+            currentPlayerIndex = 0,
+            phase = GamePhase.BUYING
+        )
+
+        gameState.advanceTurn()
+
+        assertEquals(1, gameState.currentPlayerIndex)
+        assertEquals("Bob", gameState.currentPlayer?.name)
+        assertEquals(GamePhase.ROLLING, gameState.phase)
+    }
+
+    @Test
+    fun `advanceTurn returns early when all players are eliminated or bankrupt`() {
+        val players = mutableListOf(
+            Player(id = "1", name = "Alice", money = 0, ownedPropertyIds = mutableListOf()),
+            Player(id = "2", name = "Bob", money = 0, ownedPropertyIds = mutableListOf())
+        )
+        players[0].eliminated = true
+        players[1].eliminated = true
+
+        val gameState = GameState(
+            gameId = "game-1",
+            fields = BoardFactory.createDefaultBoard(),
+            players = players,
+            currentPlayerIndex = 0,
+            phase = GamePhase.BUYING
+        )
+
+        gameState.advanceTurn()
+
+        assertEquals(0, gameState.currentPlayerIndex)
+        assertEquals(GamePhase.FINISHED, gameState.phase)
     }
 }
