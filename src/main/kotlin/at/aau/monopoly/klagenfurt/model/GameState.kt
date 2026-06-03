@@ -33,7 +33,8 @@ data class GameState(
     var bankruptcyTotalDebt: Int = 0,
     var bankruptcyPropertiesCount: Int = 0,
     var bankruptcyOwnedFieldIds: List<Int> = emptyList(),
-    var bankruptcyPlayerId: String = ""
+    var bankruptcyPlayerId: String = "",
+    var hasDrawnCardThisTurn: Boolean = false
 ) {
     /** The player whose turn it currently is. */
     val currentPlayer: Player?
@@ -56,6 +57,7 @@ data class GameState(
         phase = GamePhase.ROLLING
         currentActionCard = null
         pendingPayment = null
+        hasDrawnCardThisTurn = false
     }
 
     /** End the current player's turn without advancing to the next player yet.
@@ -63,6 +65,7 @@ data class GameState(
     fun endCurrentTurn() {
         phase = GamePhase.TURN_END
         lastDiceRoll = null
+        hasDrawnCardThisTurn = false
     }
 
     /** Returns true when only one player has money / properties remaining. */

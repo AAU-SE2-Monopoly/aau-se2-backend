@@ -765,6 +765,155 @@ class WebSocketBrokerControllerTest {
     }
 
     @Test
+    fun `handleAction END_TURN should reject when on Chance field and card not drawn`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.BUYING
+        gameState.currentPlayer!!.position = 7 // ChanceField
+        gameState.hasDrawnCardThisTurn = false
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "END_TURN"
+            )
+        )
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("must draw a card"))
+    }
+
+    @Test
+    fun `handleAction END_TURN should reject when on Community Chest field and card not drawn`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.BUYING
+        gameState.currentPlayer!!.position = 2 // CommunityChestField
+        gameState.hasDrawnCardThisTurn = false
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "END_TURN"
+            )
+        )
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("must draw a card"))
+    }
+
+    @Test
+    fun `handleAction END_TURN should succeed when on Chance field after drawing card`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.BUYING
+        gameState.currentPlayer!!.position = 7 // ChanceField
+        gameState.hasDrawnCardThisTurn = true
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "END_TURN"
+            )
+        )
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("TURN_ENDED", event.event)
+    }
+
+    @Test
+    fun `handleAction END_TURN should succeed when not on card field`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.BUYING
+        gameState.currentPlayer!!.position = 1 // PropertyField (not a card field)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "END_TURN"
+            )
+        )
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("TURN_ENDED", event.event)
+    }
+
+    @Test
+    fun `executeAction MOVE_TO another card field should reset hasDrawnCardThisTurn`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.advanceTurn()
+        gameState.currentPlayer!!.position = 7 // starting on ChanceField
+        gameState.hasDrawnCardThisTurn = true
+        gameState.currentActionCard = ChanceCard(
+            id = 99,
+            description = "Move to another Chance",
+            action = CardAction.MOVE_TO,
+            targetFieldId = 36
+        )
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "EXECUTE_ACTION"
+            )
+        )
+
+        assertFalse(gameState.hasDrawnCardThisTurn)
+        assertEquals(36, gameState.currentPlayer!!.position)
+    }
+
+    @Test
+    fun `drawCard should fail when already drawn this turn`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.advanceTurn()
+        gameState.currentPlayer!!.position = 7 // ChanceField
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DRAW_CARD",
+                payload = mutableMapOf("cardType" to "CHANCE")
+            )
+        )
+        Mockito.clearInvocations(messagingTemplate)
+
+        gameState.currentActionCard = null
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DRAW_CARD",
+                payload = mutableMapOf("cardType" to "CHANCE")
+            )
+        )
+
+        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("already drawn a card"))
+    }
+
+    @Test
     fun `drawChanceCard should move card from deck to currentActionCard`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
@@ -2514,6 +2663,7 @@ class WebSocketBrokerControllerTest {
         // Draw all cards to empty the deck
         for (i in 1..initialSize) {
             gameState.currentActionCard = null
+            gameState.hasDrawnCardThisTurn = false
             controller.handleAction(
                 GameAction(
                     gameId = gameState.gameId,

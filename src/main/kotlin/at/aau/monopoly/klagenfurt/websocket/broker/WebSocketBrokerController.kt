@@ -742,10 +742,19 @@ class WebSocketBrokerController(
             return
         }
 
-        val player = gameState.currentPlayer
+        val player = gameState.currentPlayer ?: run {
+            sendGameError(action, gameState, "No current player.")
+            return
+        }
+
+        val currentField = gameState.fields.getOrNull(player.position)
+        if (!gameState.hasDrawnCardThisTurn && (currentField is ChanceField || currentField is CommunityChestField)) {
+            sendGameError(action, gameState, "You must draw a card before ending your turn.")
+            return
+        }
         val isDoublet = gameState.lastDiceRoll?.isDouble == true
 
-        if (player != null && isDoublet && !player.isBankrupt() && !player.inJail && player.consecutiveDoublets > 0) {
+        if (isDoublet && !player.isBankrupt() && !player.inJail && player.consecutiveDoublets > 0) {
             gameState.endCurrentTurn()
             gameState.phase = GamePhase.ROLLING
             sendGameEvent(
@@ -755,7 +764,7 @@ class WebSocketBrokerController(
                 "${player.name} rolled a doublet and gets another turn!"
             )
         } else {
-            player?.let { it.consecutiveDoublets = 0 }
+            player.consecutiveDoublets = 0
 
             gameState.endCurrentTurn()
             gameState.advanceTurn()
@@ -797,6 +806,10 @@ class WebSocketBrokerController(
         executeCardAction(gameState, card, action.playerId)
         if (card.action == CardAction.MOVE_TO || card.action == CardAction.MOVE_FORWARD) {
             resolveLandingEffects(action, gameState, player)
+            val currentField = gameState.fields.getOrNull(player.position)
+            if (currentField is ChanceField || currentField is CommunityChestField) {
+                gameState.hasDrawnCardThisTurn = false
+            }
         }
         gameState.currentActionCard = null
         sendGameEvent(
@@ -813,8 +826,8 @@ class WebSocketBrokerController(
     ) {
         if (!validateCurrentPlayerTurn(action, gameState)) return
 
-        if (gameState.currentActionCard != null) {
-            sendGameError(action, gameState, "You have already drawn a card this turn. Execute or end your turn first.")
+        if (gameState.hasDrawnCardThisTurn) {
+            sendGameError(action, gameState, "You have already drawn a card this turn.")
             return
         }
 
@@ -872,6 +885,7 @@ class WebSocketBrokerController(
         }
 
         gameState.currentActionCard = card
+        gameState.hasDrawnCardThisTurn = true
 
         sendGameEvent(
             action,
