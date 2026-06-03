@@ -66,8 +66,7 @@ src/main/kotlin/at/aau/monopoly/klagenfurt/
 │       ├── ChanceField.kt
 │       └── CommunityChestField.kt
 ├── service/
-│   └── GameService.kt                  # Placeholder service (currently empty)
-└── websocket/
+│   └── GameService.kt                  # Placeholder service (currently empty)└── websocket/
     └── broker/
         ├── WebSocketBrokerConfig.kt    # STOMP config: endpoint /ws, prefix /app, broker /topic
         └── WebSocketBrokerController.kt# STOMP @MessageMapping handlers
@@ -146,6 +145,7 @@ The WebSocket server listens at **`ws://<host>/ws`**.
 | `GAME_CLOSED` | `/app/game/close` succeeded |
 | `LOBBY_UPDATE` | Sent on `/topic/lobby` after lobby-changing operations |
 | `STATE_SNAPSHOT` | `/app/game/state` (game found) |
+| `TURN_TIMEOUT` | The current player's turn was auto-completed by the server after they were idle longer than the turn timeout (default 60s). All intermediate actions (roll, draw/execute card, pay/declare bankruptcy, end turn) are auto-resolved. |
 | `ERROR` | Any operation on an unknown gameId, or unrecognised action |
 
 ### `LobbyEvent` structure
@@ -224,6 +224,7 @@ Manages the lifecycle of all concurrent games via a `ConcurrentHashMap<String, G
 | `hostPlayerId` | `String` | The player who created the game (host) |
 | `currentActionCard` | `Card?` | Current Chance/Community Chest card waiting for execution |
 | `hasDrawnCardThisTurn` | `Boolean` | Track if player has already drawn a card this turn |
+| `turnTimerStartedAtMillis` | `Long` | Epoch-millis when the current player's turn-timeout clock started (0 = inactive). Refreshed on each action and turn change; used by `TurnTimeoutService`. |
 
 Computed helpers: `currentPlayer`, `advanceTurn()`, `endCurrentTurn()`, `isGameOver()`.
 

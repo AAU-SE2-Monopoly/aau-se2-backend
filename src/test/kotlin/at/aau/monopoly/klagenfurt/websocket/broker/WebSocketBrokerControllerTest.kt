@@ -4291,4 +4291,167 @@ class WebSocketBrokerControllerTest {
 
         assertEquals("host-1", gameState.bankruptcyPlayerId)
     }
+
+    // ─── Turn-timeout / forceEndTurn ───────────────────────────────────────────
+
+    @Test
+    fun `forceEndTurn returns false for unknown game`() {
+        val (controller, _, _) = createController()
+        assertFalse(controller.forceEndTurn("does-not-exist"))
+    }
+
+    @Test
+    fun `forceEndTurn returns false while WAITING`() {
+        val (controller, gameController, _) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+
+        assertFalse(controller.forceEndTurn(gameState.gameId))
+    }
+
+    @Test
+    fun `forceEndTurn rolls and advances when player idle in ROLLING phase`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee"))
+        gameState.advanceTurn()
+        // Avoid landing on a doublet special-case by forcing a non-card field start.
+        gameState.currentPlayer!!.position = 1
+
+        val ended = controller.forceEndTurn(gameState.gameId)
+
+        assertTrue(ended)
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("TURN_TIMEOUT", event.event)
+        // Turn should have advanced away from the idle player (unless a doublet was
+        // rolled, in which case they keep the turn but a new ROLLING phase begins).
+        assertTrue(gameState.phase == GamePhase.ROLLING)
+    }
+
+    @Test
+    fun `forceEndTurn ends turn from BUYING phase`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee"))
+        gameState.advanceTurn()
+        gameState.currentPlayer!!.position = 1
+        gameState.phase = GamePhase.BUYING
+        gameState.lastDiceRoll = DiceRoll(2, 5) // non-doublet
+
+        val ended = controller.forceEndTurn(gameState.gameId)
+
+        assertTrue(ended)
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("TURN_TIMEOUT", event.event)
+        assertEquals("host-1", gameState.currentPlayer!!.id)
+    }
+
+    @Test
+    fun `forceEndTurn auto-draws and executes card on card field`() {
+        val (controller, gameController, _) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee"))
+        gameState.advanceTurn()
+        gameState.currentPlayer!!.position = 7 // ChanceField
+        gameState.phase = GamePhase.BUYING
+        gameState.hasDrawnCardThisTurn = false
+        gameState.lastDiceRoll = DiceRoll(2, 5) // non-doublet
+
+        val ended = controller.forceEndTurn(gameState.gameId)
+
+        assertTrue(ended)
+        // Card resolved and turn advanced — no leftover action card.
+        assertNull(gameState.currentActionCard)
+        assertEquals("host-1", gameState.currentPlayer!!.id)
+    }
+
+    @Test
+    fun `forceEndTurn auto-pays rent when affordable`() {
+        val (controller, gameController, _) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee", money = 1500))
+        gameState.currentPlayerIndex = 0
+        gameState.currentPlayer!!.position = 1
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.lastDiceRoll = DiceRoll(2, 5)
+        gameState.pendingPayment = PendingPayment(
+            amount = 100, source = PaymentSource.RENT, sourceFieldId = 1, creditorPlayerId = "host-2"
+        )
+
+        val ended = controller.forceEndTurn(gameState.gameId)
+
+        assertTrue(ended)
+        assertNull(gameState.pendingPayment)
+        assertEquals(1400, gameState.players[0].money)
+        assertEquals(1600, gameState.players[1].money)
+    }
+
+    @Test
+    fun `forceEndTurn declares bankruptcy when rent unpayable`() {
+        val (controller, gameController, _) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 10))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee", money = 1500))
+        gameState.currentPlayerIndex = 0
+        gameState.currentPlayer!!.position = 1
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.lastDiceRoll = DiceRoll(2, 5)
+        gameState.pendingPayment = PendingPayment(
+            amount = 1200, source = PaymentSource.RENT, sourceFieldId = 1, creditorPlayerId = "host-2"
+        )
+
+        val ended = controller.forceEndTurn(gameState.gameId)
+
+        assertTrue(ended)
+        assertTrue(gameState.players[0].eliminated)
+        assertNull(gameState.pendingPayment)
+    }
+
+    @Test
+    fun `forceEndTurn liquidates assets to cover rent before bankruptcy`() {
+        val (controller, gameController, _) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 10))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee", money = 1500))
+        gameState.currentPlayerIndex = 0
+        gameState.currentPlayer!!.position = 3
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.lastDiceRoll = DiceRoll(2, 5)
+        // Give the debtor a mortgageable property worth enough to cover the debt.
+        val owned = gameState.fields[1] as PropertyField
+        owned.ownerId = "host-1"
+        gameState.players[0].ownedPropertyIds.add(1)
+        val mortgageValue = owned.price / 2
+        gameState.pendingPayment = PendingPayment(
+            amount = mortgageValue, source = PaymentSource.RENT, sourceFieldId = 3, creditorPlayerId = "host-2"
+        )
+        val rentProp = gameState.fields[3] as PropertyField
+        rentProp.ownerId = "host-2"
+
+        val ended = controller.forceEndTurn(gameState.gameId)
+
+        assertTrue(ended)
+        // Player should have mortgaged and paid rather than going bankrupt.
+        assertFalse(gameState.players[0].eliminated)
+        assertTrue(owned.isMortgaged)
+        assertNull(gameState.pendingPayment)
+    }
+
+    @Test
+    fun `resetTurnTimer refreshes the deadline on action`() {
+        val (controller, gameController, _) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.advanceTurn()
+        // Simulate an old timer.
+        gameState.turnTimerStartedAtMillis = 1L
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "ROLL_DICE"))
+
+        assertTrue(gameState.turnTimerStartedAtMillis > 1L)
+    }
 }
