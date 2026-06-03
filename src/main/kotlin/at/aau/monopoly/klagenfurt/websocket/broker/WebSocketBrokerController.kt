@@ -131,6 +131,7 @@ class WebSocketBrokerController(
                 return
             }
         gameState.advanceTurn()
+        gameController.persist(action.gameId)
         messagingTemplate.convertAndSend(
             "/topic/game/${action.gameId}",
             GameEvent(
@@ -217,6 +218,8 @@ class WebSocketBrokerController(
                     )
                 }
             }
+            // Persist the (possibly) mutated game state after every action.
+            gameController.persist(action.gameId)
         }
     }
 
