@@ -68,6 +68,11 @@ class GameController {
             "Game '$gameId' is already full ($maxPlayersPerGame players)."
         }
 
+        // 4. Fresh join — icon must be unique.
+        require(gameState.players.none { it.iconId == player.iconId }) {
+            "Icon '${player.iconId}' is already taken by another player."
+        }
+
         gameState.players.add(player)
         return gameState
     }
