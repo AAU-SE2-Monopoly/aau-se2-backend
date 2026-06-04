@@ -218,6 +218,9 @@ class WebSocketBrokerController(
                     )
                 }
             }
+            // A real player just acted — refresh their turn-timeout clock so an
+            // engaged player is never forcibly skipped.
+            gameState.resetTurnTimer()
             // Persist the (possibly) mutated game state after every action.
             gameController.persist(action.gameId)
         }
@@ -779,6 +782,161 @@ class WebSocketBrokerController(
                 "Next turn: ${gameState.currentPlayer?.name}."
             )
         }
+    }
+
+    /**
+     * Forces the current player's turn to a clean end, executing any intermediate
+     * actions that would normally be required of the player. Used by the turn-timeout
+     * sweep so a game does not get stuck if a player's device dies mid-turn.
+     *
+     * The game lock is acquired here so this is safe to call from a scheduled thread.
+     *
+     * @return true if a turn was actually forced to end, false if nothing was due.
+     */
+    fun forceEndTurn(gameId: String): Boolean {
+        val lock = gameLocks.computeIfAbsent(gameId) { Any() }
+        synchronized(lock) {
+            val gameState = gameController.getGameState(gameId) ?: return false
+            val player = gameState.currentPlayer ?: return false
+            if (gameState.phase == GamePhase.WAITING || gameState.phase == GamePhase.FINISHED) {
+                return false
+            }
+
+            val timeoutAction = GameAction(
+                gameId = gameId,
+                playerId = player.id,
+                action = "END_TURN"
+            )
+
+            // 1. The player may still need to roll the dice to even start resolving.
+            if (gameState.phase == GamePhase.ROLLING) {
+                handleRollDice(timeoutAction.copy(action = "ROLL_DICE"), gameState)
+            }
+
+            // 2. If the player landed on a Chance / Community Chest field they must
+            //    draw and execute the card before the turn can end.
+            autoResolveCard(gameState, player.id)
+
+            // 3. Settle any pending payment (rent / card payment).
+            autoResolvePendingPayment(gameId, gameState, player)
+
+            // 4. Finally end the turn (advances to the next player, or grants another
+            //    roll on a doublet).
+            if (gameState.phase == GamePhase.BUYING || gameState.phase == GamePhase.TURN_END) {
+                handleEndTurn(timeoutAction, gameState)
+            }
+
+            gameState.resetTurnTimer()
+            sendGameEvent(
+                timeoutAction,
+                gameState,
+                "TURN_TIMEOUT",
+                "${player.name}'s turn was auto-completed after inactivity."
+            )
+            gameController.persist(gameId)
+            return true
+        }
+    }
+
+    /** Draws (if needed) and executes a card for a timed-out player on a card field. */
+    private fun autoResolveCard(gameState: GameState, playerId: String) {
+        val player = gameState.players.find { it.id == playerId } ?: return
+        val currentField = gameState.fields.getOrNull(player.position)
+        val onCardField = currentField is ChanceField || currentField is CommunityChestField
+
+        if (onCardField && !gameState.hasDrawnCardThisTurn) {
+            val cardType = if (currentField is ChanceField) "CHANCE" else "COMMUNITY_CHEST"
+            val drawAction = GameAction(
+                gameId = gameState.gameId,
+                playerId = playerId,
+                action = "DRAW_CARD",
+                payload = mutableMapOf("cardType" to cardType)
+            )
+            handleDrawCard(drawAction, gameState)
+        }
+
+        if (gameState.currentActionCard != null) {
+            val executeAction = GameAction(
+                gameId = gameState.gameId,
+                playerId = playerId,
+                action = "EXECUTE_ACTION"
+            )
+            handleExecuteAction(executeAction, gameState)
+        }
+    }
+
+    /**
+     * Auto-resolves a pending payment for a timed-out player: pays if affordable,
+     * otherwise liquidates assets / declares bankruptcy so the game can continue.
+     */
+    private fun autoResolvePendingPayment(
+        gameId: String,
+        gameState: GameState,
+        player: Player
+    ) {
+        val pending = gameState.pendingPayment ?: return
+        if (gameState.phase != GamePhase.PAYING_RENT || pending.amount <= 0) return
+
+        if (player.money < pending.amount) {
+            autoLiquidateForDebt(gameState, player, pending.amount)
+        }
+
+        if (player.money >= pending.amount) {
+            val payAction = GameAction(
+                gameId = gameId,
+                playerId = player.id,
+                action = "PAY_RENT",
+                payload = pending.sourceFieldId?.let {
+                    mutableMapOf("fieldId" to it.toString())
+                } ?: mutableMapOf()
+            )
+            handlePayRent(payAction, gameState)
+        } else {
+            val bankruptcyAction = GameAction(
+                gameId = gameId,
+                playerId = player.id,
+                action = "DECLARE_BANKRUPTCY"
+            )
+            handleDeclareBankruptcy(bankruptcyAction, gameState)
+        }
+    }
+
+    /**
+     * Sells buildings and mortgages properties for a timed-out player until they can
+     * cover [amountDue] or run out of assets. Mirrors the manual sell/mortgage flow.
+     */
+    private fun autoLiquidateForDebt(
+        gameState: GameState,
+        player: Player,
+        amountDue: Int
+    ) {
+        val owned = gameState.fields.filterIsInstance<PropertyField>()
+            .filter { it.ownerId == player.id }
+
+        owned.filter { it.hasHotel }.forEach {
+            if (player.money < amountDue) {
+                it.hasHotel = false
+                it.houses = 4
+                player.money += it.hotelCost / 2
+            }
+        }
+        owned.sortedByDescending { it.houses }.forEach { prop ->
+            while (player.money < amountDue && prop.houses > 0) {
+                prop.houses -= 1
+                player.money += prop.houseCost / 2
+            }
+        }
+        gameState.fields.filterIsInstance<OwnableField>()
+            .filter { it.ownerId == player.id && !it.isMortgaged }
+            .forEach { field ->
+                if (player.money < amountDue) {
+                    val hasBuildings = field is PropertyField && (field.houses > 0 || field.hasHotel)
+                    if (!hasBuildings) {
+                        PaymentService.mortgageProperty(player, field)
+                    }
+                }
+            }
+        recomputeCanPayAfterAssets(gameState)
     }
 
     private fun handleExecuteAction(

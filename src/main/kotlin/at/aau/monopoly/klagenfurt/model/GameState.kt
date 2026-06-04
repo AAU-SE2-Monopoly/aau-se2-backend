@@ -34,11 +34,22 @@ data class GameState(
     var bankruptcyPropertiesCount: Int = 0,
     var bankruptcyOwnedFieldIds: List<Int> = emptyList(),
     var bankruptcyPlayerId: String = "",
-    var hasDrawnCardThisTurn: Boolean = false
+    var hasDrawnCardThisTurn: Boolean = false,
+    /**
+     * Epoch-millis timestamp marking when the current player's turn-timeout clock started.
+     * Refreshed whenever the active player changes or performs an action.
+     * A value of 0 means no timer is active (e.g. while WAITING).
+     */
+    var turnTimerStartedAtMillis: Long = 0
 ) {
     /** The player whose turn it currently is. */
     val currentPlayer: Player?
         get() = players.getOrNull(currentPlayerIndex)
+
+    /** (Re)starts the turn-timeout clock for the current player. */
+    fun resetTurnTimer(nowMillis: Long = System.currentTimeMillis()) {
+        turnTimerStartedAtMillis = nowMillis
+    }
 
     /** Advance the turn to the next player (wraps around). */
     fun advanceTurn() {
@@ -58,6 +69,7 @@ data class GameState(
         currentActionCard = null
         pendingPayment = null
         hasDrawnCardThisTurn = false
+        resetTurnTimer()
     }
 
     /** End the current player's turn without advancing to the next player yet.
