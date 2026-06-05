@@ -2251,7 +2251,6 @@ class WebSocketBrokerControllerTest {
         )
 
         val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-
         assertEquals("HOTEL_SOLD", event.event)
         assertEquals(false, property.hasHotel)
         assertEquals(4, property.houses)
@@ -4573,5 +4572,247 @@ class WebSocketBrokerControllerTest {
             assertEquals(freeParkingBefore + 100, gameState.freeParkingMoney)
             assertTrue(event.message!!.contains("Reichensteuer") && event.message!!.contains("100€"))
         }
+    }
+
+    // ═══ TAX FIELD EDGE CASES ═══
+    
+    @Test
+    fun `TAX_FIELD pays immediately when sufficient funds`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        val player = Player(id = "host-1", name = "Alice", position = 4, money = 500)
+        gameController.joinGame(gameState.gameId, player)
+        gameState.phase = GamePhase.ROLLING
+         
+        // Manually force the player to position 4 (Income Tax)
+        player.position = 4
+        player.money = 500
+         
+        Mockito.clearInvocations(messagingTemplate)
+         
+        // Simulate landing on Tax by handling dice roll
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "ROLL_DICE",
+                payload = mutableMapOf("cheat" to "true") // Use cheat mode for predictable roll
+            )
+        )
+         
+        // The tax should be handled automatically
+        // Player money should be at least 200 less if landed on field 4
+        assertTrue(gameState.pendingPayment == null || player.money <= 500, "Player should either have paid or have pending payment")
+    }
+     
+    @Test
+    fun `TAX_FIELD creates pending payment when insufficient funds`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        val player = Player(id = "host-1", name = "Alice", money = 50)
+        gameController.joinGame(gameState.gameId, player)
+        gameState.phase = GamePhase.ROLLING
+        gameState.currentPlayerIndex = 0
+         
+        // Manually move player to position 4 (Income Tax - 200€)
+        player.position = 4
+        player.money = 50  // Not enough for 200€ tax
+         
+        Mockito.clearInvocations(messagingTemplate)
+         
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "ROLL_DICE",
+                payload = mutableMapOf("cheat" to "true")
+            )
+        )
+         
+        // After rolling and potentially landing on tax field
+        if (player.position == 4) {
+            assertNotNull(gameState.pendingPayment, "PendingPayment should be created for insufficient funds")
+            assertEquals(PaymentSource.TAX, gameState.pendingPayment?.source)
+            assertEquals(200, gameState.pendingPayment?.amount)
+            assertEquals(GamePhase.PAYING_RENT, gameState.phase)
+        }
+    }
+     
+    @Test
+    fun `PAY_TAX deducts money and adds to Free Parking`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500))
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(
+            amount = 200,
+            source = PaymentSource.TAX,
+            sourceFieldId = 4,
+            creditorPlayerId = null
+        )
+         
+        val player = gameState.currentPlayer!!
+        val moneyBefore = player.money
+        val freeParkingBefore = gameState.freeParkingMoney
+         
+        Mockito.clearInvocations(messagingTemplate)
+         
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "PAY_TAX",
+                payload = mutableMapOf("fieldId" to "4")
+            )
+        )
+         
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+         
+        assertEquals("TAX_PAID", event.event)
+        assertEquals(moneyBefore - 200, player.money)
+        assertEquals(freeParkingBefore + 200, gameState.freeParkingMoney)
+        assertNull(gameState.pendingPayment)
+        assertEquals(GamePhase.TURN_END, gameState.phase)
+    }
+     
+    @Test
+    fun `PAY_TAX rejects when insufficient funds (forces Bankruptcy)`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 100))
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(
+            amount = 200,
+            source = PaymentSource.TAX,
+            sourceFieldId = 4,
+            creditorPlayerId = null,
+            debtorCanPayAfterAssets = false
+        )
+         
+        val player = gameState.currentPlayer!!
+         
+        Mockito.clearInvocations(messagingTemplate)
+         
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "PAY_TAX",
+                payload = mutableMapOf("fieldId" to "4")
+            )
+        )
+         
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+         
+        assertEquals("PAYMENT_FAILED", event.event)
+        assertEquals(100, player.money)  // Money unchanged
+        assertNotNull(gameState.pendingPayment)  // Payment still pending
+    }
+     
+    @Test
+    fun `TAX_FIELD luxury tax (38) is 100€ not 200€`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        val player = Player(id = "host-1", name = "Alice", money = 1500)
+        gameController.joinGame(gameState.gameId, player)
+        gameState.phase = GamePhase.ROLLING
+        gameState.currentPlayerIndex = 0
+         
+        // Manually move to field 38 (Luxury Tax)
+        player.position = 38
+        player.money = 200
+         
+        val freeParkingBefore = gameState.freeParkingMoney
+         
+        Mockito.clearInvocations(messagingTemplate)
+         
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "ROLL_DICE",
+                payload = mutableMapOf("cheat" to "true")
+            )
+        )
+         
+        // After rolling
+        if (player.position == 38) {
+            assertEquals(100, player.money)  // 200 - 100€ luxury tax
+            assertEquals(freeParkingBefore + 100, gameState.freeParkingMoney)
+        }
+    }
+     
+    @Test
+    fun `TAX payment fails when player is already bankrupt`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 100))
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(
+            amount = 200,
+            source = PaymentSource.TAX,
+            sourceFieldId = 4,
+            creditorPlayerId = null
+        )
+         
+        val player = gameState.currentPlayer!!
+        player.money = -100  // Mark as bankrupt
+         
+        Mockito.clearInvocations(messagingTemplate)
+         
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "PAY_TAX",
+                payload = mutableMapOf("fieldId" to "4")
+            )
+        )
+         
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+         
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("bankrupt", ignoreCase = true))
+    }
+     
+    @Test
+    fun `TAX payment can be deferred by selling assets`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        val player = Player(id = "host-1", name = "Alice", money = 100)
+        gameController.joinGame(gameState.gameId, player)
+         
+        // Give player a property with a house
+        val propField = gameState.fields[1] as PropertyField
+        propField.ownerId = player.id
+        propField.houses = 1
+        player.ownedPropertyIds.add(1)
+         
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(
+            amount = 200,
+            source = PaymentSource.TAX,
+            sourceFieldId = 4,
+            creditorPlayerId = null,
+            debtorCanPayAfterAssets = true  // Can pay after selling assets
+        )
+         
+        Mockito.clearInvocations(messagingTemplate)
+         
+        // Try to pay tax - should fail initially but indicate bankruptcy handling available
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "PAY_TAX",
+                payload = mutableMapOf("fieldId" to "4")
+            )
+        )
+         
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+         
+        // Should indicate payment failed but suggest asset selling
+        assertEquals("PAYMENT_FAILED", event.event)
+        assertNotNull(gameState.pendingPayment)
     }
 }

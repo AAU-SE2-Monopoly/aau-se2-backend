@@ -19,6 +19,8 @@ data class GameEvent(
     companion object {
         const val RENT_DUE = "RENT_DUE"
         const val RENT_PAID = "RENT_PAID"
+        const val TAX_DUE = "TAX_DUE"
+        const val TAX_PAID = "TAX_PAID"
 
         const val PROPERTY_MORTGAGED = "PROPERTY_MORTGAGED"
         const val PROPERTY_UNMORTGAGED = "PROPERTY_UNMORTGAGED"
@@ -28,4 +30,3 @@ data class GameEvent(
         const val FREE_PARKING_COLLECTED = "FREE_PARKING_COLLECTED"
     }
 }
-
