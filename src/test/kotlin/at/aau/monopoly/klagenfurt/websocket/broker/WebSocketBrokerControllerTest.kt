@@ -25,6 +25,7 @@ import java.security.Principal
 import at.aau.monopoly.klagenfurt.model.field.RailroadField
 import at.aau.monopoly.klagenfurt.model.field.UtilityField
 
+
 class WebSocketBrokerControllerTest {
 
     private fun createController(): Triple<WebSocketBrokerController, GameController, SimpMessagingTemplate> {
@@ -4813,6 +4814,112 @@ class WebSocketBrokerControllerTest {
          
         // Should indicate payment failed but suggest asset selling
         assertEquals("PAYMENT_FAILED", event.event)
+        assertNotNull(gameState.pendingPayment)
+    }
+    @Test
+    fun `ROLL_DICE landing on Free Parking collects jackpot`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+
+        val player = gameState.players[0]
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.ROLLING
+        gameState.freeParkingMoney = 300
+        player.position = 8
+        player.money = 1500
+
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "ROLL_DICE",
+                payload = mutableMapOf("cheat" to "true")
+            )
+        )
+
+        val events = captureLastMessages(messagingTemplate, 2)
+            .map { it.second as GameEvent }
+
+        assertEquals(20, player.position)
+        assertEquals(1800, player.money)
+        assertEquals(0, gameState.freeParkingMoney)
+        assertTrue(events.any { it.event == GameEvent.FREE_PARKING_COLLECTED })
+    }
+    @Test
+    fun `PAY_TAX should move money to Free Parking and emit TAX_PAID`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+
+        val player = gameState.players[0]
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.freeParkingMoney = 0
+        player.money = 150
+
+        gameState.pendingPayment = PendingPayment(
+            amount = 100,
+            source = PaymentSource.TAX,
+            sourceFieldId = 38,
+            creditorPlayerId = null,
+            debtorCanPayAfterAssets = true
+        )
+
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "PAY_TAX",
+                payload = mutableMapOf("fieldId" to "38")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals(GameEvent.TAX_PAID, event.event)
+        assertEquals(50, player.money)
+        assertEquals(100, gameState.freeParkingMoney)
+        assertNull(gameState.pendingPayment)
+        assertEquals(GamePhase.TURN_END, gameState.phase)
+    }
+    @Test
+    fun `PAY_TAX with insufficient money emits payment failed`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+
+        val player = gameState.players[0]
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.PAYING_RENT
+        player.money = 50
+
+        gameState.pendingPayment = PendingPayment(
+            amount = 100,
+            source = PaymentSource.TAX,
+            sourceFieldId = 38
+        )
+
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "PAY_TAX",
+                payload = mutableMapOf("fieldId" to "38")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals(GameEvent.PAYMENT_FAILED, event.event)
+        assertEquals(50, player.money)
+        assertEquals(0, gameState.freeParkingMoney)
         assertNotNull(gameState.pendingPayment)
     }
 }
