@@ -4,8 +4,11 @@ import at.aau.monopoly.klagenfurt.model.PaymentSource
 import at.aau.monopoly.klagenfurt.model.PendingPayment
 import at.aau.monopoly.klagenfurt.model.Player
 import at.aau.monopoly.klagenfurt.model.enums.GamePhase
+import at.aau.monopoly.klagenfurt.service.GamePersistenceService
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Path
 
 class GameControllerTest {
 
@@ -345,5 +348,38 @@ class GameControllerTest {
         val rejoined = controller.joinGame(game.gameId, Player(id = "p1", name = "AliceRejoin"))
         assertEquals(2, rejoined.players.size)
         assertEquals("Alice", rejoined.players[0].name)
+    }
+
+    @Test
+    fun `persisted games are restored into a new controller on startup`(@TempDir tmp: Path) {
+        val persistence = GamePersistenceService(enabled = true, dir = tmp.toString())
+
+        // First controller instance creates a game and persists it.
+        val controller1 = GameController(persistence)
+        val game = controller1.createGame(hostPlayerId = "host-1")
+        controller1.joinGame(game.gameId, Player(id = "host-1", name = "Alice"))
+
+        // Simulate a restart: a brand-new controller backed by the same directory.
+        val controller2 = GameController(persistence)
+        controller2.restorePersistedGames()
+
+        val restored = controller2.getGameState(game.gameId)
+        assertNotNull(restored)
+        assertEquals("Alice", restored!!.players[0].name)
+        assertEquals("host-1", restored.hostPlayerId)
+    }
+
+    @Test
+    fun `closing a game removes its persisted file so it is not restored`(@TempDir tmp: Path) {
+        val persistence = GamePersistenceService(enabled = true, dir = tmp.toString())
+        val controller1 = GameController(persistence)
+        val game = controller1.createGame(hostPlayerId = "host-1")
+        controller1.joinGame(game.gameId, Player(id = "host-1", name = "Alice"))
+        controller1.closeGame(game.gameId, "host-1")
+
+        val controller2 = GameController(persistence)
+        controller2.restorePersistedGames()
+
+        assertNull(controller2.getGameState(game.gameId))
     }
 }
