@@ -5341,4 +5341,163 @@ class WebSocketBrokerControllerTest {
         assertEquals(GameEvent.PROPERTY_UNMORTGAGED, event.event)
         assertFalse(property.isMortgaged)
     }
+
+    @Test
+    fun `PAY_TAX should pay pending tax and add amount to free parking`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+
+        val player = gameState.players[0]
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.PAYING_RENT
+        player.money = 500
+        gameState.freeParkingMoney = 50
+
+        gameState.pendingPayment = PendingPayment(
+            amount = 200,
+            source = PaymentSource.TAX,
+            sourceFieldId = 4,
+            creditorPlayerId = null
+        )
+
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "PAY_TAX",
+                payload = mutableMapOf("fieldId" to "4")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals(GameEvent.TAX_PAID, event.event)
+        assertEquals(300, player.money)
+        assertEquals(250, gameState.freeParkingMoney)
+        assertNull(gameState.pendingPayment)
+        assertEquals(GamePhase.TURN_END, gameState.phase)
+    }
+
+    @Test
+    fun `EXECUTE_ACTION move to tax field should emit TAX_PAID when player has enough money`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+
+        val player = gameState.players[0]
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.BUYING
+        player.position = 0
+        player.money = 1500
+        gameState.freeParkingMoney = 0
+
+        gameState.currentActionCard = ChanceCard(
+            id = 9001,
+            description = "Advance to Income Tax",
+            action = CardAction.MOVE_TO,
+            targetFieldId = 4
+        )
+
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "EXECUTE_ACTION"
+            )
+        )
+
+        val events = captureLastMessages(messagingTemplate, 2)
+            .map { it.second as GameEvent }
+
+        assertEquals(4, player.position)
+        assertEquals(1300, player.money)
+        assertEquals(200, gameState.freeParkingMoney)
+        assertTrue(events.any { it.event == GameEvent.TAX_PAID })
+    }
+
+    @Test
+    fun `EXECUTE_ACTION move to tax field should emit TAX_DUE when player has insufficient money`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+
+        val player = gameState.players[0]
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.BUYING
+        player.position = 0
+        player.money = 50
+
+        gameState.currentActionCard = ChanceCard(
+            id = 9002,
+            description = "Advance to Income Tax",
+            action = CardAction.MOVE_TO,
+            targetFieldId = 4
+        )
+
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "EXECUTE_ACTION"
+            )
+        )
+
+        val events = captureLastMessages(messagingTemplate, 2)
+            .map { it.second as GameEvent }
+
+        assertEquals(4, player.position)
+        assertEquals(GamePhase.PAYING_RENT, gameState.phase)
+        assertNotNull(gameState.pendingPayment)
+        assertEquals(PaymentSource.TAX, gameState.pendingPayment!!.source)
+        assertEquals(200, gameState.pendingPayment!!.amount)
+        assertTrue(events.any { it.event == GameEvent.TAX_DUE })
+    }
+
+    @Test
+    fun `EXECUTE_ACTION move to Free Parking should collect jackpot`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+
+        val player = gameState.players[0]
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.BUYING
+        player.position = 0
+        player.money = 1000
+        gameState.freeParkingMoney = 300
+
+        gameState.currentActionCard = ChanceCard(
+            id = 9003,
+            description = "Advance to Free Parking",
+            action = CardAction.MOVE_TO,
+            targetFieldId = 20
+        )
+
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "EXECUTE_ACTION"
+            )
+        )
+
+        val events = captureLastMessages(messagingTemplate, 2)
+            .map { it.second as GameEvent }
+
+        assertEquals(20, player.position)
+        assertEquals(1300, player.money)
+        assertEquals(0, gameState.freeParkingMoney)
+        assertTrue(events.any { it.event == GameEvent.FREE_PARKING_COLLECTED })
+    }
+
+
 }
