@@ -5,14 +5,33 @@ import at.aau.monopoly.klagenfurt.model.BoardFactory
 import at.aau.monopoly.klagenfurt.model.GameState
 import at.aau.monopoly.klagenfurt.model.Player
 import at.aau.monopoly.klagenfurt.model.enums.GamePhase
+import at.aau.monopoly.klagenfurt.service.GamePersistenceService
+import jakarta.annotation.PostConstruct
 import org.springframework.stereotype.Service
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 @Service
-class GameController {
+class GameController(
+    private val persistenceService: GamePersistenceService =
+        GamePersistenceService(enabled = false, dir = "data")
+) {
 
     private val games: ConcurrentHashMap<String, GameState> = ConcurrentHashMap()
+
+    /** Restores any games persisted on disk into memory on application startup. */
+    @PostConstruct
+    fun restorePersistedGames() {
+        games.putAll(persistenceService.loadAll())
+    }
+
+    /**
+     * Persists the current state of the game with the given [gameId], if it exists.
+     * Called by the WebSocket controller after state-changing actions.
+     */
+    fun persist(gameId: String) {
+        games[gameId]?.let { persistenceService.save(it) }
+    }
 
     /** Maximum number of players allowed per game. */
     val maxPlayersPerGame: Int = 5
@@ -32,6 +51,7 @@ class GameController {
             hostPlayerId = hostPlayerId
         )
         games[gameId] = gameState
+        persistenceService.save(gameState)
         return gameState
     }
 
@@ -74,6 +94,7 @@ class GameController {
         }
 
         gameState.players.add(player)
+        persistenceService.save(gameState)
         return gameState
     }
 
@@ -86,7 +107,11 @@ class GameController {
      * Removes the game with the given [gameId].
      * @return true if the game was removed, false if it did not exist.
      */
-    fun removeGame(gameId: String): Boolean = games.remove(gameId) != null
+    fun removeGame(gameId: String): Boolean {
+        val removed = games.remove(gameId) != null
+        if (removed) persistenceService.delete(gameId)
+        return removed
+    }
 
     /**
      * Closes (removes) the game if the requesting [playerId] is the host.
@@ -103,6 +128,7 @@ class GameController {
             "Only the host can close the game."
         }
         games.remove(gameId)
+        persistenceService.delete(gameId)
         return gameState
     }
 

@@ -18,5 +18,9 @@ abstract class Card(
     /** Target field index (for MOVE_TO) */
     open val targetFieldId: Int? = null,
     /** Number of spaces to move (for MOVE_FORWARD) */
-    open val moveSpaces: Int = 0
+    open val moveSpaces: Int = 0,
+    /** Per-house amount for PAY_PER_BUILDING (e.g. Chance card 10: 25 per house) */
+    open val perBuildingAmount: Int = 0,
+    /** Per-hotel amount for PAY_PER_BUILDING (e.g. Chance card 10: 100 per hotel) */
+    open val perHotelAmount: Int = 0
 )
