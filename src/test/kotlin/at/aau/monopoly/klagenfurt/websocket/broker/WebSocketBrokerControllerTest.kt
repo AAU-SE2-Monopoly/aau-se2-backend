@@ -4922,4 +4922,126 @@ class WebSocketBrokerControllerTest {
         assertEquals(0, gameState.freeParkingMoney)
         assertNotNull(gameState.pendingPayment)
     }
+    @Test
+    fun `PAY_TAX with wrong field id should send error`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+
+        val player = gameState.players[0]
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.PAYING_RENT
+        player.money = 500
+
+        gameState.pendingPayment = PendingPayment(
+            amount = 100,
+            source = PaymentSource.TAX,
+            sourceFieldId = 38
+        )
+
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "PAY_TAX",
+                payload = mutableMapOf("fieldId" to "4")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ERROR", event.event)
+        assertEquals(500, player.money)
+        assertEquals(0, gameState.freeParkingMoney)
+        assertNotNull(gameState.pendingPayment)
+    }
+
+
+    @Test
+    fun `PAY_TAX with missing field id should send error`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+
+        val player = gameState.players[0]
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.PAYING_RENT
+        player.money = 500
+
+        gameState.pendingPayment = PendingPayment(
+            amount = 100,
+            source = PaymentSource.TAX,
+            sourceFieldId = 38
+        )
+
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "PAY_TAX"
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ERROR", event.event)
+        assertEquals(500, player.money)
+        assertEquals(0, gameState.freeParkingMoney)
+        assertNotNull(gameState.pendingPayment)
+    }
+
+    @Test
+    fun `PAY_TAX outside paying rent phase should send error`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.BUYING
+
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "PAY_TAX",
+                payload = mutableMapOf("fieldId" to "38")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ERROR", event.event)
+    }
+
+    @Test
+    fun `PAY_TAX without pending payment should send error`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = null
+
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "PAY_TAX",
+                payload = mutableMapOf("fieldId" to "38")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ERROR", event.event)
+    }
 }
