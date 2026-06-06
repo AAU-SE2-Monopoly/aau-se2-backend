@@ -6,7 +6,7 @@ import at.aau.monopoly.klagenfurt.model.card.CommunityChestCard
 import at.aau.monopoly.klagenfurt.model.enums.GamePhase
 import at.aau.monopoly.klagenfurt.model.field.Field
 
-enum class PaymentSource { RENT, CARD_PAY, CARD_PAY_EACH, CARD_REPAIR }
+enum class PaymentSource { RENT, CARD_PAY, CARD_PAY_EACH, CARD_REPAIR, TAX }
 
 data class PendingPayment(
     val amount: Int,
