@@ -170,30 +170,7 @@ class WebSocketBrokerController(
 
             "REPORT_CHEATER" -> handleReportCheater(action, gameState)
 
-            "PAY_JAIL_FINE" -> {
-                if (!validateCurrentPlayerTurn(action, gameState)) return
-                val player = gameState.currentPlayer!!
-                if (!player.inJail) {
-                    messagingTemplate.convertAndSend("/topic/game/${action.gameId}", GameEvent(gameId = action.gameId, event = "ERROR", message = "You are not in jail."))
-                    return
-                }
-                if (player.money < 50) {
-                    messagingTemplate.convertAndSend("/topic/game/${action.gameId}", GameEvent(gameId = action.gameId, event = "ERROR", message = "Not enough money to pay the fine."))
-                    return
-                }
-                player.money -= 50
-                player.inJail = false
-                player.jailTurns = 0
-                messagingTemplate.convertAndSend(
-                    "/topic/game/${action.gameId}",
-                    GameEvent(
-                        gameId = action.gameId,
-                        event = "JAIL_FINE_PAID",
-                        gameState = gameState,
-                        message = "${player.name} paid 50M to get out of jail."
-                    )
-                )
-            }
+           
                 "USE_JAIL_CARD" -> handleUseJailCard(action, gameState)
 
                 "END_TURN" -> handleEndTurn(action, gameState)
