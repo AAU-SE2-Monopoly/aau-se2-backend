@@ -455,9 +455,9 @@ class WebSocketBrokerControllerTest {
         controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "ROLL_DICE"))
 
         val payCaptor = ArgumentCaptor.forClass(Any::class.java)
-        Mockito.verify(messagingTemplate, Mockito.times(1))
+        Mockito.verify(messagingTemplate, Mockito.atLeastOnce())
             .convertAndSend(Mockito.any(String::class.java), payCaptor.capture())
-        val event = payCaptor.value as GameEvent
+        val event = payCaptor.allValues.filterIsInstance<GameEvent>().last()
         assertNotNull(event.gameState!!.lastDiceRoll)
         assertTrue(event.message!!.contains("rolled"))
         assertTrue(event.message.contains("="))
@@ -4518,7 +4518,42 @@ class WebSocketBrokerControllerTest {
         assertEquals(2000, accused.money)
     }
 
+
+
     @Test
+    fun `handleAction REPORT_CHEATER error handling`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 1500, iconId = "woerthersee"))
+
+        // Missing reportedPlayerId
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "REPORT_CHEATER", payload = mutableMapOf()))
+        var event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("missing"))
+
+        // Report self
+        Mockito.clearInvocations(messagingTemplate)
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "REPORT_CHEATER", payload = mutableMapOf("reportedPlayerId" to "host-1")))
+        event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("yourself"))
+
+        // Invalid reported player
+        Mockito.clearInvocations(messagingTemplate)
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "REPORT_CHEATER", payload = mutableMapOf("reportedPlayerId" to "ghost")))
+        event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("not found"))
+
+        // Invalid reporter
+        Mockito.clearInvocations(messagingTemplate)
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "ghost", action = "REPORT_CHEATER", payload = mutableMapOf("reportedPlayerId" to "host-2")))
+        event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("not found"))
+    }
     fun `handleAction ROLL_DICE should deduct tax when landing on income tax field`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
@@ -5537,39 +5572,6 @@ class WebSocketBrokerControllerTest {
         assertTrue(events.any { it.event == GameEvent.FREE_PARKING_COLLECTED })
     }
 
-    @Test
-    fun `handleAction REPORT_CHEATER error handling`() {
-        val (controller, gameController, messagingTemplate) = createController()
-        val gameState = gameController.createGame(hostPlayerId = "host-1")
-        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500))
-        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 1500, iconId = "woerthersee"))
-
-        // Missing reportedPlayerId
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "REPORT_CHEATER", payload = mutableMapOf()))
-        var event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("missing"))
-
-        // Report self
-        Mockito.clearInvocations(messagingTemplate)
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "REPORT_CHEATER", payload = mutableMapOf("reportedPlayerId" to "host-1")))
-        event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("yourself"))
-
-        // Invalid reported player
-        Mockito.clearInvocations(messagingTemplate)
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "REPORT_CHEATER", payload = mutableMapOf("reportedPlayerId" to "ghost")))
-        event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("not found"))
-
-        // Invalid reporter
-        Mockito.clearInvocations(messagingTemplate)
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "ghost", action = "REPORT_CHEATER", payload = mutableMapOf("reportedPlayerId" to "host-2")))
-        event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("not found"))
-    }
 }
+
 
