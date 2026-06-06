@@ -4451,6 +4451,8 @@ class WebSocketBrokerControllerTest {
         gameState.turnTimerStartedAtMillis = 1L
 
         controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "ROLL_DICE"))
+        assertTrue(gameState.turnTimerStartedAtMillis > 1L)
+    }
 
     @Test
     fun `handleAction REPORT_CHEATER success`() {
@@ -4526,6 +4528,4 @@ class WebSocketBrokerControllerTest {
         assertTrue(event.message!!.contains("not found"))
     }
 }
-        assertTrue(gameState.turnTimerStartedAtMillis > 1L)
-    }
-}
+
