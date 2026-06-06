@@ -5145,4 +5145,200 @@ class WebSocketBrokerControllerTest {
                     gameState.communityChestCards.size == communitySizeBefore + 1
         )
     }
+    @Test
+    fun `PAY_TAX with zero pending amount should send error`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+
+        val player = gameState.players[0]
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.PAYING_RENT
+        player.money = 500
+
+        gameState.pendingPayment = PendingPayment(
+            amount = 0,
+            source = PaymentSource.TAX,
+            sourceFieldId = 4
+        )
+
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "PAY_TAX",
+                payload = mutableMapOf("fieldId" to "4")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ERROR", event.event)
+        assertEquals("No pending payment to pay.", event.message)
+    }
+
+    @Test
+    fun `PAY_TAX by bankrupt player should send error`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+
+        val player = gameState.players[0]
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.PAYING_RENT
+        player.eliminated = true
+        player.money = 500
+
+        gameState.pendingPayment = PendingPayment(
+            amount = 100,
+            source = PaymentSource.TAX,
+            sourceFieldId = 4
+        )
+
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "PAY_TAX",
+                payload = mutableMapOf("fieldId" to "4")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ERROR", event.event)
+        assertEquals("You are bankrupt and cannot pay rent.", event.message)
+    }
+
+    @Test
+    fun `PAY_RENT with unsupported payment source should send error`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.PAYING_RENT
+
+        gameState.pendingPayment = PendingPayment(
+            amount = 100,
+            source = PaymentSource.CARD_PAY,
+            sourceFieldId = null
+        )
+
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "PAY_RENT"
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("Unsupported payment source"))
+    }
+    @Test
+    fun `ROLL_DICE landing on empty Free Parking should not send collected event`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+
+        val player = gameState.players[0]
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.ROLLING
+        gameState.freeParkingMoney = 0
+        player.position = 8
+        player.money = 1500
+
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "ROLL_DICE",
+                payload = mutableMapOf("cheat" to "true")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("DICE_ROLLED", event.event)
+        assertEquals(20, player.position)
+        assertEquals(1500, player.money)
+        assertEquals(0, gameState.freeParkingMoney)
+        assertNotEquals(GameEvent.FREE_PARKING_COLLECTED, event.event)
+    }
+    @Test
+    fun `UNMORTGAGE_PROPERTY should send error when player has not enough money`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+
+        val player = gameState.players[0]
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.BUYING
+        player.money = 1
+
+        val property = gameState.fields.filterIsInstance<PropertyField>().first()
+        property.ownerId = player.id
+        property.isMortgaged = true
+        player.ownedPropertyIds.add(property.id)
+
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "UNMORTGAGE_PROPERTY",
+                payload = mutableMapOf("fieldId" to property.id.toString())
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("Not enough money to unmortgage"))
+        assertTrue(property.isMortgaged)
+    }
+    @Test
+    fun `UNMORTGAGE_PROPERTY should unmortgage property when player has enough money`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+
+        val player = gameState.players[0]
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.BUYING
+        player.money = 1000
+
+        val property = gameState.fields.filterIsInstance<PropertyField>().first()
+        property.ownerId = player.id
+        property.isMortgaged = true
+        player.ownedPropertyIds.add(property.id)
+
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "UNMORTGAGE_PROPERTY",
+                payload = mutableMapOf("fieldId" to property.id.toString())
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals(GameEvent.PROPERTY_UNMORTGAGED, event.event)
+        assertFalse(property.isMortgaged)
+    }
 }
