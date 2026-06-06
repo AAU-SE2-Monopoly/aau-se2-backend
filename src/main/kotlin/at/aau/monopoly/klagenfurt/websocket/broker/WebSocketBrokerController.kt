@@ -1232,32 +1232,6 @@ class WebSocketBrokerController(
              gameState.phase = GamePhase.TURN_END
          }
 
-          // Handle TaxField
-          val field = gameState.fields[newPos]
-          if (field is TaxField) {
-              val taxAmount = field.amount
-
-              // Check if player can pay taxes
-              if (player.money >= taxAmount) {
-                  // Player can pay immediately
-                  player.money -= taxAmount
-                  gameState.freeParkingMoney += taxAmount
-                  eventMessage += " Landed on ${field.name} and paid ${taxAmount}€ in taxes."
-              } else {
-                  // Player cannot pay - set up pending payment for bankruptcy handling
-                  gameState.phase = GamePhase.PAYING_RENT
-                  gameState.pendingPayment = PendingPayment(
-                      amount = taxAmount,
-                      source = PaymentSource.TAX,
-                      sourceFieldId = newPos,
-                      creditorPlayerId = null, // No creditor for taxes - goes to Free Parking
-                      debtorCanPayAfterAssets = PaymentService.canPayAfterAssets(player, gameState.fields, taxAmount)
-                  )
-                  eventMessage += " Landed on ${field.name} and owes ${taxAmount}€ in taxes. Payment required."
-                  return eventMessage
-              }
-          }
-
           return eventMessage
      }
 
@@ -1401,8 +1375,61 @@ class WebSocketBrokerController(
         player: Player
     ) {
         val landedField = gameState.fields.getOrNull(player.position) ?: return
+
+        handleTaxFieldLanding(action, gameState, player, landedField)
+        if (gameState.phase == GamePhase.PAYING_RENT) return
+
         handleOwnableFieldLanding(action, gameState, player, landedField)
         handleFreeParkingLanding(action, gameState, player, landedField)
+    }
+
+    private fun handleTaxFieldLanding(
+        action: GameAction,
+        gameState: GameState,
+        player: Player,
+        landedField: Field
+    ) {
+        if (landedField !is TaxField) return
+
+        val taxAmount = landedField.amount
+
+        if (player.money >= taxAmount) {
+            player.money -= taxAmount
+            gameState.freeParkingMoney += taxAmount
+
+            messagingTemplate.convertAndSend(
+                "/topic/game/${action.gameId}",
+                GameEvent(
+                    gameId = action.gameId,
+                    event = GameEvent.TAX_PAID,
+                    gameState = gameState,
+                    message = "${player.name} paid ${taxAmount}€ tax."
+                )
+            )
+        } else {
+            gameState.phase = GamePhase.PAYING_RENT
+            gameState.pendingPayment = PendingPayment(
+                amount = taxAmount,
+                source = PaymentSource.TAX,
+                sourceFieldId = landedField.id,
+                creditorPlayerId = null,
+                debtorCanPayAfterAssets = PaymentService.canPayAfterAssets(
+                    player,
+                    gameState.fields,
+                    taxAmount
+                )
+            )
+
+            messagingTemplate.convertAndSend(
+                "/topic/game/${action.gameId}",
+                GameEvent(
+                    gameId = action.gameId,
+                    event = GameEvent.TAX_DUE,
+                    gameState = gameState,
+                    message = "${player.name} owes ${taxAmount}€ tax."
+                )
+            )
+        }
     }
 
     private fun handleOwnableFieldLanding(
