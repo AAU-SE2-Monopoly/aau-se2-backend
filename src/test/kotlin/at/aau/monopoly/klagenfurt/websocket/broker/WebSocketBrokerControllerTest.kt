@@ -3046,5 +3046,12 @@ class WebSocketBrokerControllerTest {
         event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
         assertEquals("ERROR", event.event)
         assertTrue(event.message!!.contains("not found"))
+
+        // Invalid reporter
+        Mockito.clearInvocations(messagingTemplate)
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "ghost", action = "REPORT_CHEATER", payload = mutableMapOf("reportedPlayerId" to "host-2")))
+        event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("not found"))
     }
 }

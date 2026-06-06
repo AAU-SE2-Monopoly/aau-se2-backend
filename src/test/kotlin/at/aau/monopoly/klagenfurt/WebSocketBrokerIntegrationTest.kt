@@ -282,4 +282,43 @@ class WebSocketBrokerIntegrationTest {
 
         session.disconnect()
     }
+
+    // ─── Game: report cheater ────────────────────────────────────────────────
+
+    @Test
+    fun `report cheater successfully`() {
+        val gameState = gameController.createGame("host-1")
+        val gameId = gameState.gameId
+        gameController.joinGame(gameId, Player(id = "host-1", name = "Alice"))
+        gameController.joinGame(gameId, Player(id = "player-1", name = "Bob", iconId = "woerthersee"))
+
+        val events: BlockingQueue<GameEvent> = LinkedBlockingDeque()
+        val session = initStompSession(
+            "/topic/game/$gameId",
+            JacksonJsonMessageConverter(),
+            events,
+            GameEvent::class.java
+        )
+
+        Thread.sleep(500) // Wait for subscription
+
+        // Make Bob a cheater
+        val bob = gameState.players.find { it.id == "player-1" }!!
+        bob.hasCheated = true
+
+        val action = GameAction(
+            gameId = gameId,
+            playerId = "host-1",
+            action = "REPORT_CHEATER",
+            payload = mutableMapOf("reportedPlayerId" to "player-1")
+        )
+        session.send("/app/game/action", action)
+
+        val event = events.poll(2, TimeUnit.SECONDS)
+        assertThat(event).isNotNull
+        assertThat(event!!.event).isEqualTo("CHEATER_REPORTED")
+        assertThat(event.message).contains("successfully reported Bob")
+
+        session.disconnect()
+    }
 }
