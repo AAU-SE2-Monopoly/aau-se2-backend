@@ -168,6 +168,9 @@ class WebSocketBrokerController(
 
                 "PAY_JAIL_FINE" -> handlePayJailFine(action, gameState)
 
+            "REPORT_CHEATER" -> handleReportCheater(action, gameState)
+
+           
                 "USE_JAIL_CARD" -> handleUseJailCard(action, gameState)
 
                 "END_TURN" -> handleEndTurn(action, gameState)
@@ -1081,6 +1084,7 @@ class WebSocketBrokerController(
         gameState.lastDiceRoll = roll
 
         val player = gameState.currentPlayer!!
+        player.hasCheated = action.payload["cheat"] == "true"
         var eventMessage = "${player.name} rolled ${roll.die1} + ${roll.die2} = ${roll.total}."
 
         if (player.inJail) {
@@ -1935,4 +1939,61 @@ class WebSocketBrokerController(
         return property
     }
 
+    private fun handleReportCheater(
+        action: GameAction,
+        gameState: GameState
+    ) {
+        val reporterId = action.playerId
+        val reportedPlayerId = action.payload["reportedPlayerId"]
+
+        if (reportedPlayerId == null) {
+            messagingTemplate.convertAndSend(
+                "/topic/game/${action.gameId}",
+                GameEvent(gameId = action.gameId, event = "ERROR", message = "reportedPlayerId is missing.")
+            )
+            return
+        }
+
+        if (reporterId == reportedPlayerId) {
+            messagingTemplate.convertAndSend(
+                "/topic/game/${action.gameId}",
+                GameEvent(gameId = action.gameId, event = "ERROR", message = "You cannot report yourself.")
+            )
+            return
+        }
+
+        val reporter = gameState.players.find { it.id == reporterId }
+        val reported = gameState.players.find { it.id == reportedPlayerId }
+
+        if (reporter == null || reported == null) {
+            messagingTemplate.convertAndSend(
+                "/topic/game/${action.gameId}",
+                GameEvent(gameId = action.gameId, event = "ERROR", message = "Reporter or reported player not found.")
+            )
+            return
+        }
+
+        if (reported.hasCheated) {
+            reported.money -= 500
+            reporter.money += 500
+            reported.hasCheated = false // reset flag so they aren't repeatedly fined
+
+            sendGameEvent(
+                action,
+                gameState,
+                "CHEATER_REPORTED",
+                "${reporter.name} successfully reported ${reported.name} for cheating! ${reported.name} paid a 500M fine to ${reporter.name}."
+            )
+        } else {
+            reporter.money -= 500
+            reported.money += 500
+
+            sendGameEvent(
+                action,
+                gameState,
+                "CHEATER_REPORT_FAILED",
+                "${reporter.name} falsely accused ${reported.name} of cheating, and pays them a 500M fine!"
+            )
+        }
+    }
 }
