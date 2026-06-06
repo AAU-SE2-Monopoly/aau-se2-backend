@@ -188,6 +188,8 @@ class WebSocketBrokerController(
 
                 "PAY_RENT" -> handlePayRent(action, gameState)
 
+                "PAY_TAX" -> handlePayRent(action, gameState)
+
                 "MORTGAGE_PROPERTY" -> handleMortgageProperty(action, gameState)
 
                 "UNMORTGAGE_PROPERTY" -> handleUnmortgageProperty(action, gameState)
@@ -1202,36 +1204,36 @@ class WebSocketBrokerController(
         player.position = newPos
     }
 
-    private fun movePlayerAndHandleGoToJail(
-        gameState: GameState,
-        player: Player,
-        rollTotal: Int,
-        message: String
-    ): String {
-        var eventMessage = message
+     private fun movePlayerAndHandleGoToJail(
+         gameState: GameState,
+         player: Player,
+         rollTotal: Int,
+         message: String
+     ): String {
+         var eventMessage = message
 
-        val oldPos = player.position
-        val newPos = (oldPos + rollTotal) % gameState.fields.size
+         val oldPos = player.position
+         val newPos = (oldPos + rollTotal) % gameState.fields.size
 
-        if (newPos < oldPos) {
-            player.money += 200
-            eventMessage += " and passed Go (+200€)."
-        }
+         if (newPos < oldPos) {
+             player.money += 200
+             eventMessage += " and passed Go (+200€)."
+         }
 
-        player.position = newPos
-        gameState.phase = GamePhase.BUYING
+         player.position = newPos
+         gameState.phase = GamePhase.BUYING
 
-        if (newPos == 30) {
-            player.inJail = true
-            player.position = 10
-            player.jailTurns = 0
-            player.consecutiveDoublets = 0
-            eventMessage += " Landed on Go To Jail!"
-            gameState.phase = GamePhase.TURN_END
-        }
+         if (newPos == 30) {
+             player.inJail = true
+             player.position = 10
+             player.jailTurns = 0
+             player.consecutiveDoublets = 0
+             eventMessage += " Landed on Go To Jail!"
+             gameState.phase = GamePhase.TURN_END
+         }
 
-        return eventMessage
-    }
+          return eventMessage
+     }
 
     private fun handleBuyProperty(
         action: GameAction,
@@ -1373,8 +1375,61 @@ class WebSocketBrokerController(
         player: Player
     ) {
         val landedField = gameState.fields.getOrNull(player.position) ?: return
+
+        handleTaxFieldLanding(action, gameState, player, landedField)
+        if (gameState.phase == GamePhase.PAYING_RENT) return
+
         handleOwnableFieldLanding(action, gameState, player, landedField)
         handleFreeParkingLanding(action, gameState, player, landedField)
+    }
+
+    private fun handleTaxFieldLanding(
+        action: GameAction,
+        gameState: GameState,
+        player: Player,
+        landedField: Field
+    ) {
+        if (landedField !is TaxField) return
+
+        val taxAmount = landedField.amount
+
+        if (player.money >= taxAmount) {
+            player.money -= taxAmount
+            gameState.freeParkingMoney += taxAmount
+
+            messagingTemplate.convertAndSend(
+                "/topic/game/${action.gameId}",
+                GameEvent(
+                    gameId = action.gameId,
+                    event = GameEvent.TAX_PAID,
+                    gameState = gameState,
+                    message = "${player.name} paid ${taxAmount}€ tax."
+                )
+            )
+        } else {
+            gameState.phase = GamePhase.PAYING_RENT
+            gameState.pendingPayment = PendingPayment(
+                amount = taxAmount,
+                source = PaymentSource.TAX,
+                sourceFieldId = landedField.id,
+                creditorPlayerId = null,
+                debtorCanPayAfterAssets = PaymentService.canPayAfterAssets(
+                    player,
+                    gameState.fields,
+                    taxAmount
+                )
+            )
+
+            messagingTemplate.convertAndSend(
+                "/topic/game/${action.gameId}",
+                GameEvent(
+                    gameId = action.gameId,
+                    event = GameEvent.TAX_DUE,
+                    gameState = gameState,
+                    message = "${player.name} owes ${taxAmount}€ tax."
+                )
+            )
+        }
     }
 
     private fun handleOwnableFieldLanding(
@@ -1581,40 +1636,55 @@ class WebSocketBrokerController(
         }
 
         // Process payment based on source
-        when (pending.source) {
-            PaymentSource.RENT -> {
-                // Rent: money goes to the creditor player
-                val creditorId = pending.creditorPlayerId
-                if (creditorId == null) {
-                    sendGameError(action, gameState, "Invalid pending payment: missing creditor for rent.")
-                    return
-                }
-                val creditor = gameState.players.find { it.id == creditorId }
-                if (creditor == null || creditor.isBankrupt()) {
-                    sendGameError(action, gameState, "Creditor not found or bankrupt.")
-                    return
-                }
-                if (player.money < pending.amount) {
-                    sendPaymentFailed(action, gameState, pending.amount)
-                    return
-                }
-                player.money -= pending.amount
-                creditor.money += pending.amount
-            }
-            else -> {
-                sendGameError(action, gameState, "Unsupported payment source: ${pending.source}")
-                return
-            }
-        }
+         when (pending.source) {
+             PaymentSource.RENT -> {
+                 // Rent: money goes to the creditor player
+                 val creditorId = pending.creditorPlayerId
+                 if (creditorId == null) {
+                     sendGameError(action, gameState, "Invalid pending payment: missing creditor for rent.")
+                     return
+                 }
+                 val creditor = gameState.players.find { it.id == creditorId }
+                 if (creditor == null || creditor.isBankrupt()) {
+                     sendGameError(action, gameState, "Creditor not found or bankrupt.")
+                     return
+                 }
+                 if (player.money < pending.amount) {
+                     sendPaymentFailed(action, gameState, pending.amount)
+                     return
+                 }
+                 player.money -= pending.amount
+                 creditor.money += pending.amount
+             }
+             PaymentSource.TAX -> {
+                 // Tax: money goes to Free Parking pot
+                 if (player.money < pending.amount) {
+                     sendPaymentFailed(action, gameState, pending.amount)
+                     return
+                 }
+                 player.money -= pending.amount
+                 gameState.freeParkingMoney += pending.amount
+             }
+             else -> {
+                 sendGameError(action, gameState, "Unsupported payment source: ${pending.source}")
+                 return
+             }
+         }
 
-        // Clear pending payment
-        gameState.pendingPayment = null
-        gameState.phase = GamePhase.TURN_END
+         // Clear pending payment
+         gameState.pendingPayment = null
+         gameState.phase = GamePhase.TURN_END
 
-        messagingTemplate.convertAndSend(
-            "/topic/game/${action.gameId}",
-            GameEvent(gameId = action.gameId, event = GameEvent.RENT_PAID, gameState = gameState)
-        )
+         messagingTemplate.convertAndSend(
+             "/topic/game/${action.gameId}",
+             GameEvent(
+                 gameId = action.gameId,
+                 event = when (pending.source) {
+                     PaymentSource.TAX -> GameEvent.TAX_PAID
+                     else -> GameEvent.RENT_PAID
+                 },
+                 gameState = gameState)
+         )
     }
 
     private fun sendPaymentFailed(action: GameAction, gameState: GameState, amount: Int) {
