@@ -5044,4 +5044,105 @@ class WebSocketBrokerControllerTest {
 
         assertEquals("ERROR", event.event)
     }
+
+    @Test
+    fun `forceEndTurn should auto liquidate houses to pay tax debt`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+
+        val player = gameState.players[0]
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.PAYING_RENT
+        player.money = 0
+
+        val property = gameState.fields.filterIsInstance<PropertyField>().first()
+        property.ownerId = player.id
+        property.houses = 2
+        player.ownedPropertyIds.add(property.id)
+
+        gameState.pendingPayment = PendingPayment(
+            amount = 50,
+            source = PaymentSource.TAX,
+            sourceFieldId = 4,
+            creditorPlayerId = null,
+            debtorCanPayAfterAssets = true
+        )
+
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.forceEndTurn(gameState.gameId)
+
+        assertTrue(player.money >= 0)
+        assertTrue(property.houses < 2)
+        assertEquals(50, gameState.freeParkingMoney)
+        assertNull(gameState.pendingPayment)
+    }
+
+    @Test
+    fun `forceEndTurn should auto mortgage property to pay tax debt`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+
+        val player = gameState.players[0]
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.PAYING_RENT
+        player.money = 0
+
+        val property = gameState.fields.filterIsInstance<PropertyField>().first()
+        property.ownerId = player.id
+        property.houses = 0
+        property.isMortgaged = false
+        player.ownedPropertyIds.add(property.id)
+
+        gameState.pendingPayment = PendingPayment(
+            amount = 20,
+            source = PaymentSource.TAX,
+            sourceFieldId = 4,
+            creditorPlayerId = null,
+            debtorCanPayAfterAssets = true
+        )
+
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.forceEndTurn(gameState.gameId)
+
+        assertTrue(property.isMortgaged)
+        assertEquals(20, gameState.freeParkingMoney)
+        assertNull(gameState.pendingPayment)
+    }
+
+    @Test
+    fun `USE_JAIL_CARD should return jail card to deck`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+
+        val player = gameState.players[0]
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.ROLLING
+        player.inJail = true
+        player.getOutOfJailCards = 1
+
+        val chanceSizeBefore = gameState.chanceCards.size
+        val communitySizeBefore = gameState.communityChestCards.size
+
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "USE_JAIL_CARD"
+            )
+        )
+
+        assertFalse(player.inJail)
+        assertEquals(0, player.getOutOfJailCards)
+        assertTrue(
+            gameState.chanceCards.size == chanceSizeBefore + 1 ||
+                    gameState.communityChestCards.size == communitySizeBefore + 1
+        )
+    }
 }
