@@ -104,7 +104,7 @@ object BoardFactory {
         ChanceCard(id = 7,  description = "You have been acquitted due to lack of evidence! Get out of jail free!",                                  action = CardAction.GET_OUT_OF_JAIL),
         ChanceCard(id = 8,  description = "You are too drunk and stumble 3 spaces back!",                                      action = CardAction.MOVE_FORWARD,      moveSpaces = -3),
         ChanceCard(id = 9,  description = "Due to excessive drinking you spend the next while in the drunk tank. Go directly to jail. Do not pass Go, do not collect 200€!",                                            action = CardAction.GO_TO_JAIL),
-        ChanceCard(id = 10, description = "A climate protest got out of control, your houses and hotels were damaged. Pay 25€ for each house and 100€ for each hotel.", action = CardAction.PAY_MONEY, amount = 25),
+        ChanceCard(id = 10, description = "A climate protest got out of control, your houses and hotels were damaged. Pay 25€ for each house and 100€ for each hotel.", action = CardAction.PAY_PER_BUILDING, amount = 0, perBuildingAmount = 25, perHotelAmount = 100),
         ChanceCard(id = 11, description = "The student union fee is due. Pay 15€.",                                  action = CardAction.PAY_MONEY,         amount = 15),
         ChanceCard(id = 12, description = "You have a discount train ticket and want to leave the city. Go to Hauptbahnhof.",                       action = CardAction.MOVE_TO,           targetFieldId = 5),
         ChanceCard(id = 13, description = "You take a walk on Kreuzbergl and admire the scenery.",                          action = CardAction.MOVE_TO,           targetFieldId = 39),
@@ -128,7 +128,7 @@ object BoardFactory {
         CommunityChestCard(id = 12, description = "You treat your homies to a döner, pay 100€.",                   action = CardAction.PAY_MONEY,         amount = 100),
         CommunityChestCard(id = 13, description = "You lose track of time shopping at Neuer Platz. Your car is in the Lindwurm parking garage. Pay 50€!",                     action = CardAction.PAY_MONEY,         amount = 50),
         CommunityChestCard(id = 14, description = "You sing at the After Work Market on Benediktiner Platz and receive 25€.",                 action = CardAction.COLLECT_MONEY,     amount = 25),
-        CommunityChestCard(id = 15, description = "Your properties were damaged by youth vandalism. Pay 40€ for each house and 115€ for each hotel.", action = CardAction.PAY_MONEY, amount = 40),
+        CommunityChestCard(id = 15, description = "Your properties were damaged by youth vandalism. Pay 40€ for each house and 115€ for each hotel.", action = CardAction.PAY_PER_BUILDING, amount = 0, perBuildingAmount = 40, perHotelAmount = 115),
         CommunityChestCard(id = 16, description = "You finish second at the Ironman and receive 10€.", action = CardAction.COLLECT_MONEY, amount = 10)
     ).also { it.shuffle() }
 }

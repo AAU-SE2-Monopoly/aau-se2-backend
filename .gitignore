@@ -33,3 +33,7 @@ build/
 .gradle
 
 test_output.txt
+
+# Local game-state persistence directory
+/data/
+

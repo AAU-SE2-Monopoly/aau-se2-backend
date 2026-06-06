@@ -7,20 +7,33 @@ import at.aau.monopoly.klagenfurt.messaging.dtos.LobbyEvent
 import at.aau.monopoly.klagenfurt.model.DiceRoll
 import at.aau.monopoly.klagenfurt.model.Player
 import at.aau.monopoly.klagenfurt.model.card.Card
+import at.aau.monopoly.klagenfurt.model.card.ChanceCard
+import at.aau.monopoly.klagenfurt.model.card.CommunityChestCard
 import at.aau.monopoly.klagenfurt.model.enums.CardAction
 import at.aau.monopoly.klagenfurt.model.enums.GamePhase
 import at.aau.monopoly.klagenfurt.model.field.ChanceField
 import at.aau.monopoly.klagenfurt.model.field.CommunityChestField
+import at.aau.monopoly.klagenfurt.model.field.Field
+import at.aau.monopoly.klagenfurt.model.field.FreeParkingField
+import at.aau.monopoly.klagenfurt.model.field.OwnableField
 import at.aau.monopoly.klagenfurt.model.field.PropertyField
 import at.aau.monopoly.klagenfurt.model.field.RailroadField
+import at.aau.monopoly.klagenfurt.model.field.TaxField
 import at.aau.monopoly.klagenfurt.model.field.UtilityField
+import at.aau.monopoly.klagenfurt.model.PaymentSource
+import at.aau.monopoly.klagenfurt.model.PendingPayment
+import at.aau.monopoly.klagenfurt.service.PaymentService
+import at.aau.monopoly.klagenfurt.service.RentCalculator
+import kotlin.math.ceil
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.context.event.EventListener
 import org.springframework.messaging.handler.annotation.MessageMapping
 import org.springframework.messaging.simp.SimpMessagingTemplate
 import org.springframework.stereotype.Controller
 import org.springframework.web.socket.messaging.SessionDisconnectEvent
 import at.aau.monopoly.klagenfurt.model.GameState
+import java.util.concurrent.ConcurrentHashMap
 
 
 @Controller
@@ -28,6 +41,14 @@ class WebSocketBrokerController(
     private val messagingTemplate: SimpMessagingTemplate,
     private val gameController: GameController
 ) {
+
+    // ═══ DEBUG BEGIN ═══
+    @Value("\${app.debug:false}") private var debugMode: Boolean = false
+    /** For tests only. */
+    internal fun setDebugMode(enabled: Boolean) { debugMode = enabled }
+    // ═══ DEBUG END ═══
+
+    private val gameLocks = ConcurrentHashMap<String, Any>()
 
     private fun normalizeIconId(iconId: String?): String =
         iconId?.takeIf { it.isNotBlank() } ?: "lindwurm"
@@ -110,6 +131,7 @@ class WebSocketBrokerController(
                 return
             }
         gameState.advanceTurn()
+        gameController.persist(action.gameId)
         messagingTemplate.convertAndSend(
             "/topic/game/${action.gameId}",
             GameEvent(
@@ -130,18 +152,21 @@ class WebSocketBrokerController(
      */
     @MessageMapping("/game/action")
     fun handleAction(action: GameAction) {
+        val lock = gameLocks.computeIfAbsent(action.gameId) { Any() }
+        synchronized(lock) {
+            val gameState = gameController.getGameState(action.gameId)
+                ?: run {
+                    messagingTemplate.convertAndSend(
+                        "/topic/game/${action.gameId}",
+                        GameEvent(gameId = action.gameId, event = "ERROR", message = "Game not found.")
+                    )
+                    return
+                }
 
-        val gameState = gameController.getGameState(action.gameId)
-            ?: run {
-                messagingTemplate.convertAndSend(
-                    "/topic/game/${action.gameId}",
-                    GameEvent(gameId = action.gameId, event = "ERROR", message = "Game not found.")
-                )
-                return
-            }
+            when (action.action) {
+                "ROLL_DICE" -> handleRollDice(action, gameState)
 
-        when (action.action) {
-            "ROLL_DICE" -> handleRollDice(action, gameState)
+                "PAY_JAIL_FINE" -> handlePayJailFine(action, gameState)
 
             "REPORT_CHEATER" -> handleReportCheater(action, gameState)
 
@@ -169,65 +194,61 @@ class WebSocketBrokerController(
                     )
                 )
             }
+                "USE_JAIL_CARD" -> handleUseJailCard(action, gameState)
 
-            "USE_JAIL_CARD" -> {
-                if (gameState.currentPlayer?.id != action.playerId) {
-                    messagingTemplate.convertAndSend("/topic/game/${action.gameId}", GameEvent(gameId = action.gameId, event = "ERROR", message = "It is not your turn."))
-                    return
+                "END_TURN" -> handleEndTurn(action, gameState)
+
+                "DRAW_CARD" -> handleDrawCard(action, gameState)
+
+                "EXECUTE_ACTION" -> handleExecuteAction(action, gameState)
+
+                "BUY_PROPERTY" -> handleBuyProperty(action, gameState)
+
+                "BUY_HOUSE" -> handleBuyHouse(action, gameState)
+
+                "BUY_HOTEL" -> handleBuyHotel(action, gameState)
+
+                "SELL_HOUSE" -> handleSellHouse(action, gameState)
+
+                "SELL_HOTEL" -> handleSellHotel(action, gameState)
+
+                "PAY_RENT" -> handlePayRent(action, gameState)
+
+                "MORTGAGE_PROPERTY" -> handleMortgageProperty(action, gameState)
+
+                "UNMORTGAGE_PROPERTY" -> handleUnmortgageProperty(action, gameState)
+
+                "DECLARE_BANKRUPTCY" -> handleDeclareBankruptcy(action, gameState)
+
+                // ═══ DEBUG BEGIN ═══
+                "DEBUG_FORWARD_GAME" -> {
+                    if (!debugMode) {
+                        sendGameError(action, gameState, "Debug actions are disabled.")
+                    } else {
+                        handleDebugForwardGame(action, gameState)
+                    }
                 }
-                val player = gameState.currentPlayer!!
-                if (!player.inJail) {
-                    messagingTemplate.convertAndSend("/topic/game/${action.gameId}", GameEvent(gameId = action.gameId, event = "ERROR", message = "You are not in jail."))
-                    return
+                "DEBUG_SETUP_BANKRUPTCY" -> {
+                    if (!debugMode) {
+                        sendGameError(action, gameState, "Debug actions are disabled.")
+                    } else {
+                        handleDebugSetupBankruptcy(action, gameState)
+                    }
                 }
-                if (player.getOutOfJailCards <= 0) {
-                    messagingTemplate.convertAndSend("/topic/game/${action.gameId}", GameEvent(gameId = action.gameId, event = "ERROR", message = "You do not have a Get Out of Jail Free card."))
-                    return
-                }
-                player.getOutOfJailCards -= 1
-                player.inJail = false
-                player.jailTurns = 0
-                messagingTemplate.convertAndSend(
-                    "/topic/game/${action.gameId}",
-                    GameEvent(
-                        gameId = action.gameId,
-                        event = "JAIL_CARD_USED",
-                        gameState = gameState,
-                        message = "${player.name} used a Get Out of Jail Free card."
+                // ═══ DEBUG END ═══
+
+                else -> {
+                    messagingTemplate.convertAndSend(
+                        "/topic/game/${action.gameId}",
+                        GameEvent(gameId = action.gameId, event = "ERROR", message = "Unknown action: ${action.action}")
                     )
-                )
+                }
             }
-
-            "END_TURN" -> handleEndTurn(action, gameState)
-
-            "DRAW_CARD" -> handleDrawCard(action, gameState)
-
-            "EXECUTE_ACTION" -> handleExecuteAction(action, gameState)
-
-            "BUY_PROPERTY" -> handleBuyProperty(action, gameState)
-
-            "BUY_HOUSE" -> {
-                handleBuyHouse(action, gameState)
-            }
-
-            "BUY_HOTEL" -> {
-                handleBuyHotel(action, gameState)
-            }
-
-            "SELL_HOUSE" -> {
-                handleSellHouse(action, gameState)
-            }
-
-            "SELL_HOTEL" -> {
-                handleSellHotel(action, gameState)
-            }
-
-            else -> {
-                messagingTemplate.convertAndSend(
-                    "/topic/game/${action.gameId}",
-                    GameEvent(gameId = action.gameId, event = "ERROR", message = "Unknown action: ${action.action}")
-                )
-            }
+            // A real player just acted — refresh their turn-timeout clock so an
+            // engaged player is never forcibly skipped.
+            gameState.resetTurnTimer()
+            // Persist the (possibly) mutated game state after every action.
+            gameController.persist(action.gameId)
         }
     }
 
@@ -327,6 +348,19 @@ class WebSocketBrokerController(
     /**
      * Draw a Chance card from the deck. If the deck is empty, shuffle all cards back.
      */
+    private fun findNearestOfType(
+        currentPos: Int,
+        fields: List<Field>,
+        predicate: (Field) -> Boolean
+    ): Int {
+        val size = fields.size
+        for (i in 1..size) {
+            val idx = (currentPos + i) % size
+            if (predicate(fields[idx])) return idx
+        }
+        return -1
+    }
+    
     private fun drawChanceCard(gameState: GameState): Card {
         if (gameState.chanceCards.isEmpty()) {
             gameState.chanceCards.addAll(
@@ -348,6 +382,15 @@ class WebSocketBrokerController(
         return gameState.communityChestCards.removeAt(0)
     }
 
+    private fun returnJailCardToDeck(gameState: GameState) {
+        val goojfCardId = 999
+        if (gameState.chanceCards.size <= gameState.communityChestCards.size) {
+            gameState.chanceCards.add(ChanceCard(id = goojfCardId, description = "Get Out of Jail Free", action = CardAction.GET_OUT_OF_JAIL))
+        } else {
+            gameState.communityChestCards.add(CommunityChestCard(id = goojfCardId, description = "Get Out of Jail Free", action = CardAction.GET_OUT_OF_JAIL))
+        }
+    }
+
     /**
      * Execute a card action: transfer money, move player, etc.
      */
@@ -359,80 +402,82 @@ class WebSocketBrokerController(
         val player = gameState.players.find { it.id == playerId } ?: return
 
         when (card.action) {
-            CardAction.COLLECT_MONEY -> {
-                player.money += card.amount
-            }
-
+            CardAction.COLLECT_MONEY -> player.money += card.amount
             CardAction.PAY_MONEY -> {
                 player.money -= card.amount
-                gameState.freeParkingMoney += card.amount  // Money goes to Free Parking
+                gameState.freeParkingMoney += card.amount
             }
-
             CardAction.MOVE_TO -> {
                 if (card.targetFieldId != null) {
                     val oldPosition = player.position
-                    player.position = card.targetFieldId!!
-                    // If moved past or to Go (position 0), collect $200
-                    if (card.targetFieldId!! < oldPosition) {
-                        player.money += 200
+                    val target = when (card.targetFieldId) {
+                        -1 -> findNearestOfType(oldPosition, gameState.fields) { it is RailroadField }
+                        -2 -> findNearestOfType(oldPosition, gameState.fields) { it is UtilityField }
+                        else -> card.targetFieldId!!
                     }
+                    player.position = target
+                    if (target < oldPosition) player.money += 200
                 }
             }
-
             CardAction.MOVE_FORWARD -> {
                 val newPosition = player.position + card.moveSpaces
-
-                player.position = newPosition % 40
-
-                if (newPosition >= 40) {
-                    player.money += 200
-                }
+                player.position = ((newPosition % 40) + 40) % 40
+                if (newPosition >= 40) player.money += 200
             }
-
             CardAction.GO_TO_JAIL -> {
-                player.position = 10  // Jail field
+                player.position = 10
                 player.inJail = true
                 player.jailTurns = 0
             }
-
-            CardAction.GET_OUT_OF_JAIL -> {
-                player.getOutOfJailCards += 1
-            }
-
-            CardAction.PAY_EACH_PLAYER -> {
-                // Pay to each other player
-                gameState.players.forEach { otherPlayer ->
-                    if (otherPlayer.id != playerId) {
-                        player.money -= card.amount
-                        otherPlayer.money += card.amount
+            CardAction.GET_OUT_OF_JAIL -> player.getOutOfJailCards += 1
+            CardAction.PAY_PER_BUILDING -> {
+                var houses = 0
+                var hotels = 0
+                gameState.fields.filterIsInstance<PropertyField>().forEach { f ->
+                    if (f.ownerId == playerId) {
+                        houses += f.houses
+                        if (f.hasHotel) hotels++
                     }
                 }
+                val total = card.perBuildingAmount * houses + card.perHotelAmount * hotels
+                if (total > 0) {
+                    player.money -= total
+                    gameState.freeParkingMoney += total
+                }
             }
-
-            CardAction.COLLECT_FROM_EACH -> {
-                // Collect from each other player
-                gameState.players.forEach { otherPlayer ->
-                    if (otherPlayer.id != playerId) {
-                        otherPlayer.money -= card.amount
-                        player.money += card.amount
-                    }
+            CardAction.PAY_EACH_PLAYER -> gameState.players.forEach { other ->
+                if (other.id != playerId) {
+                    player.money -= card.amount
+                    other.money += card.amount
+                }
+            }
+            CardAction.COLLECT_FROM_EACH -> gameState.players.forEach { other ->
+                if (other.id != playerId) {
+                    other.money -= card.amount
+                    player.money += card.amount
                 }
             }
         }
 
+        if (card.action != CardAction.GET_OUT_OF_JAIL) {
+            when (card) {
+                is ChanceCard -> gameState.chanceCards.add(card)
+                is CommunityChestCard -> gameState.communityChestCards.add(card)
+            }
+        }
     }
 
     private fun handleBuyHouse(
         action: GameAction,
         gameState: GameState
     ) {
-        val property = getValidatedProperty(action, gameState) ?: return
-        val player = gameState.currentPlayer!!
-
-        if (gameState.phase != GamePhase.BUYING && gameState.phase != GamePhase.TURN_END) {
-            sendGameError(action, gameState, "Houses can only be bought during your turn.")
+        if (gameState.phase == GamePhase.PAYING_RENT) {
+            sendGameError(action, gameState, "Cannot buy houses while rent is due.")
             return
         }
+
+        val property = getValidatedProperty(action, gameState) ?: return
+        val player = gameState.players.find { it.id == action.playerId } ?: return
 
         if (property.ownerId != player.id) {
             sendGameError(action, gameState, "You can only build on your own properties.")
@@ -441,6 +486,11 @@ class WebSocketBrokerController(
 
         if (!ownsCompleteColorSet(gameState, player.id, property)) {
             sendGameError(action, gameState, "You need the complete color set to build houses.")
+            return
+        }
+
+        if (!isColorSetMortgageFree(gameState, property)) {
+            sendGameError(action, gameState, "Cannot build while any property in the color set is mortgaged.")
             return
         }
 
@@ -479,8 +529,13 @@ class WebSocketBrokerController(
         action: GameAction,
         gameState: GameState
     ) {
+        if (gameState.phase == GamePhase.PAYING_RENT) {
+            sendGameError(action, gameState, "Cannot buy hotels while rent is due.")
+            return
+        }
+
         val property = getValidatedProperty(action, gameState) ?: return
-        val player = gameState.currentPlayer!!
+        val player = gameState.players.find { it.id == action.playerId } ?: return
 
         if (property.ownerId != player.id) {
             sendGameError(action, gameState, "You can only build on your own properties.")
@@ -489,6 +544,11 @@ class WebSocketBrokerController(
 
         if (!ownsCompleteColorSet(gameState, player.id, property)) {
             sendGameError(action, gameState, "You need the complete color set to build a hotel.")
+            return
+        }
+
+        if (!isColorSetMortgageFree(gameState, property)) {
+            sendGameError(action, gameState, "Cannot build while any property in the color set is mortgaged.")
             return
         }
 
@@ -502,12 +562,17 @@ class WebSocketBrokerController(
             return
         }
 
-        if (player.money < property.hotelCost) {
+        if (!canBuyHotelEvenly(gameState, property)) {
+            sendGameError(action, gameState, "All properties in the color set must have 4 houses or a hotel before buying a hotel.")
+            return
+        }
+
+        if (player.money < property.houseCost) {
             sendGameError(action, gameState, "Not enough money to buy a hotel.")
             return
         }
 
-        player.money -= property.hotelCost
+        player.money -= property.houseCost
         property.houses = 0
         property.hasHotel = true
 
@@ -524,7 +589,7 @@ class WebSocketBrokerController(
         gameState: GameState
     ) {
         val property = getValidatedProperty(action, gameState) ?: return
-        val player = gameState.currentPlayer!!
+        val player = gameState.players.find { it.id == action.playerId } ?: return
 
         if (property.ownerId != player.id) {
             sendGameError(action, gameState, "You can only sell houses from your own properties.")
@@ -549,6 +614,8 @@ class WebSocketBrokerController(
         property.houses -= 1
         player.money += property.houseCost / 2
 
+        recomputeCanPayAfterAssets(gameState)
+
         sendGameEvent(
             action,
             gameState,
@@ -562,7 +629,7 @@ class WebSocketBrokerController(
         gameState: GameState
     ) {
         val property = getValidatedProperty(action, gameState) ?: return
-        val player = gameState.currentPlayer!!
+        val player = gameState.players.find { it.id == action.playerId } ?: return
 
         if (property.ownerId != player.id) {
             sendGameError(action, gameState, "You can only sell hotels from your own properties.")
@@ -574,9 +641,16 @@ class WebSocketBrokerController(
             return
         }
 
+        if (!canSellHotelEvenly(gameState, property)) {
+            sendGameError(action, gameState, "Cannot sell hotel — all properties in the color set must have at least 3 houses or a hotel.")
+            return
+        }
+
         property.hasHotel = false
         property.houses = 4
         player.money += property.hotelCost / 2
+
+        recomputeCanPayAfterAssets(gameState)
 
         sendGameEvent(
             action,
@@ -624,6 +698,38 @@ class WebSocketBrokerController(
         return property.houses == minHouses
     }
 
+    private fun canBuyHotelEvenly(
+        gameState: GameState,
+        property: PropertyField
+    ): Boolean {
+        val colorSet = gameState.fields
+            .filterIsInstance<PropertyField>()
+            .filter { it.color == property.color && it.id != property.id }
+
+        return colorSet.all { it.houses == 4 || it.hasHotel }
+    }
+
+    private fun canSellHotelEvenly(
+        gameState: GameState,
+        property: PropertyField
+    ): Boolean {
+        val colorSet = gameState.fields
+            .filterIsInstance<PropertyField>()
+            .filter { it.color == property.color && it.id != property.id }
+
+        return colorSet.all { it.houses >= 3 || it.hasHotel }
+    }
+
+    private fun isColorSetMortgageFree(
+        gameState: GameState,
+        property: PropertyField
+    ): Boolean {
+        return gameState.fields
+            .filterIsInstance<PropertyField>()
+            .filter { it.color == property.color }
+            .none { it.isMortgaged }
+    }
+
     private fun sendGameError(
         action: GameAction,
         gameState: GameState,
@@ -661,10 +767,26 @@ class WebSocketBrokerController(
         action: GameAction,
         gameState: GameState
     ) {
-        val player = gameState.currentPlayer
+        if (!validateCurrentPlayerTurn(action, gameState)) return
+
+        if (gameState.phase != GamePhase.BUYING && gameState.phase != GamePhase.TURN_END) {
+            sendGameError(action, gameState, "Cannot end turn in the current phase (${gameState.phase.name}).")
+            return
+        }
+
+        val player = gameState.currentPlayer ?: run {
+            sendGameError(action, gameState, "No current player.")
+            return
+        }
+
+        val currentField = gameState.fields.getOrNull(player.position)
+        if (!gameState.hasDrawnCardThisTurn && (currentField is ChanceField || currentField is CommunityChestField)) {
+            sendGameError(action, gameState, "You must draw a card before ending your turn.")
+            return
+        }
         val isDoublet = gameState.lastDiceRoll?.isDouble == true
 
-        if (player != null && isDoublet && !player.inJail && player.consecutiveDoublets > 0) {
+        if (isDoublet && !player.isBankrupt() && !player.inJail && player.consecutiveDoublets > 0) {
             gameState.endCurrentTurn()
             gameState.phase = GamePhase.ROLLING
             sendGameEvent(
@@ -674,7 +796,7 @@ class WebSocketBrokerController(
                 "${player.name} rolled a doublet and gets another turn!"
             )
         } else {
-            if (player != null) player.consecutiveDoublets = 0
+            player.consecutiveDoublets = 0
 
             gameState.endCurrentTurn()
             gameState.advanceTurn()
@@ -686,6 +808,161 @@ class WebSocketBrokerController(
                 "Next turn: ${gameState.currentPlayer?.name}."
             )
         }
+    }
+
+    /**
+     * Forces the current player's turn to a clean end, executing any intermediate
+     * actions that would normally be required of the player. Used by the turn-timeout
+     * sweep so a game does not get stuck if a player's device dies mid-turn.
+     *
+     * The game lock is acquired here so this is safe to call from a scheduled thread.
+     *
+     * @return true if a turn was actually forced to end, false if nothing was due.
+     */
+    fun forceEndTurn(gameId: String): Boolean {
+        val lock = gameLocks.computeIfAbsent(gameId) { Any() }
+        synchronized(lock) {
+            val gameState = gameController.getGameState(gameId) ?: return false
+            val player = gameState.currentPlayer ?: return false
+            if (gameState.phase == GamePhase.WAITING || gameState.phase == GamePhase.FINISHED) {
+                return false
+            }
+
+            val timeoutAction = GameAction(
+                gameId = gameId,
+                playerId = player.id,
+                action = "END_TURN"
+            )
+
+            // 1. The player may still need to roll the dice to even start resolving.
+            if (gameState.phase == GamePhase.ROLLING) {
+                handleRollDice(timeoutAction.copy(action = "ROLL_DICE"), gameState)
+            }
+
+            // 2. If the player landed on a Chance / Community Chest field they must
+            //    draw and execute the card before the turn can end.
+            autoResolveCard(gameState, player.id)
+
+            // 3. Settle any pending payment (rent / card payment).
+            autoResolvePendingPayment(gameId, gameState, player)
+
+            // 4. Finally end the turn (advances to the next player, or grants another
+            //    roll on a doublet).
+            if (gameState.phase == GamePhase.BUYING || gameState.phase == GamePhase.TURN_END) {
+                handleEndTurn(timeoutAction, gameState)
+            }
+
+            gameState.resetTurnTimer()
+            sendGameEvent(
+                timeoutAction,
+                gameState,
+                "TURN_TIMEOUT",
+                "${player.name}'s turn was auto-completed after inactivity."
+            )
+            gameController.persist(gameId)
+            return true
+        }
+    }
+
+    /** Draws (if needed) and executes a card for a timed-out player on a card field. */
+    private fun autoResolveCard(gameState: GameState, playerId: String) {
+        val player = gameState.players.find { it.id == playerId } ?: return
+        val currentField = gameState.fields.getOrNull(player.position)
+        val onCardField = currentField is ChanceField || currentField is CommunityChestField
+
+        if (onCardField && !gameState.hasDrawnCardThisTurn) {
+            val cardType = if (currentField is ChanceField) "CHANCE" else "COMMUNITY_CHEST"
+            val drawAction = GameAction(
+                gameId = gameState.gameId,
+                playerId = playerId,
+                action = "DRAW_CARD",
+                payload = mutableMapOf("cardType" to cardType)
+            )
+            handleDrawCard(drawAction, gameState)
+        }
+
+        if (gameState.currentActionCard != null) {
+            val executeAction = GameAction(
+                gameId = gameState.gameId,
+                playerId = playerId,
+                action = "EXECUTE_ACTION"
+            )
+            handleExecuteAction(executeAction, gameState)
+        }
+    }
+
+    /**
+     * Auto-resolves a pending payment for a timed-out player: pays if affordable,
+     * otherwise liquidates assets / declares bankruptcy so the game can continue.
+     */
+    private fun autoResolvePendingPayment(
+        gameId: String,
+        gameState: GameState,
+        player: Player
+    ) {
+        val pending = gameState.pendingPayment ?: return
+        if (gameState.phase != GamePhase.PAYING_RENT || pending.amount <= 0) return
+
+        if (player.money < pending.amount) {
+            autoLiquidateForDebt(gameState, player, pending.amount)
+        }
+
+        if (player.money >= pending.amount) {
+            val payAction = GameAction(
+                gameId = gameId,
+                playerId = player.id,
+                action = "PAY_RENT",
+                payload = pending.sourceFieldId?.let {
+                    mutableMapOf("fieldId" to it.toString())
+                } ?: mutableMapOf()
+            )
+            handlePayRent(payAction, gameState)
+        } else {
+            val bankruptcyAction = GameAction(
+                gameId = gameId,
+                playerId = player.id,
+                action = "DECLARE_BANKRUPTCY"
+            )
+            handleDeclareBankruptcy(bankruptcyAction, gameState)
+        }
+    }
+
+    /**
+     * Sells buildings and mortgages properties for a timed-out player until they can
+     * cover [amountDue] or run out of assets. Mirrors the manual sell/mortgage flow.
+     */
+    private fun autoLiquidateForDebt(
+        gameState: GameState,
+        player: Player,
+        amountDue: Int
+    ) {
+        val owned = gameState.fields.filterIsInstance<PropertyField>()
+            .filter { it.ownerId == player.id }
+
+        owned.filter { it.hasHotel }.forEach {
+            if (player.money < amountDue) {
+                it.hasHotel = false
+                it.houses = 4
+                player.money += it.hotelCost / 2
+            }
+        }
+        owned.sortedByDescending { it.houses }.forEach { prop ->
+            while (player.money < amountDue && prop.houses > 0) {
+                prop.houses -= 1
+                player.money += prop.houseCost / 2
+            }
+        }
+        gameState.fields.filterIsInstance<OwnableField>()
+            .filter { it.ownerId == player.id && !it.isMortgaged }
+            .forEach { field ->
+                if (player.money < amountDue) {
+                    val hasBuildings = field is PropertyField && (field.houses > 0 || field.hasHotel)
+                    if (!hasBuildings) {
+                        PaymentService.mortgageProperty(player, field)
+                    }
+                }
+            }
+        recomputeCanPayAfterAssets(gameState)
     }
 
     private fun handleExecuteAction(
@@ -708,11 +985,20 @@ class WebSocketBrokerController(
         }
 
         val card = gameState.currentActionCard!!
-
+        val player = gameState.players.find { it.id == action.playerId }
+            ?: run {
+                sendGameError(action, gameState, "Player not found in game.")
+                return
+            }
         executeCardAction(gameState, card, action.playerId)
-
+        if (card.action == CardAction.MOVE_TO || card.action == CardAction.MOVE_FORWARD) {
+            resolveLandingEffects(action, gameState, player)
+            val currentField = gameState.fields.getOrNull(player.position)
+            if (currentField is ChanceField || currentField is CommunityChestField) {
+                gameState.hasDrawnCardThisTurn = false
+            }
+        }
         gameState.currentActionCard = null
-
         sendGameEvent(
             action,
             gameState,
@@ -725,20 +1011,12 @@ class WebSocketBrokerController(
         action: GameAction,
         gameState: GameState
     ) {
-        if (gameState.hasDrawnChanceCardThisTurn || gameState.hasDrawnCommunityChestCardThisTurn) {
-            messagingTemplate.convertAndSend(
-                "/topic/game/${action.gameId}",
-                GameEvent(
-                    gameId = action.gameId,
-                    event = "ERROR",
-                    gameState = gameState,
-                    message = "You can only draw one card per turn."
-                )
-            )
+        if (!validateCurrentPlayerTurn(action, gameState)) return
+
+        if (gameState.hasDrawnCardThisTurn) {
+            sendGameError(action, gameState, "You have already drawn a card this turn.")
             return
         }
-
-        if (!validateCurrentPlayerTurn(action, gameState)) return
 
         val cardType = action.payload["cardType"]
 
@@ -794,10 +1072,7 @@ class WebSocketBrokerController(
         }
 
         gameState.currentActionCard = card
-        when (cardType) {
-            "CHANCE" -> gameState.hasDrawnChanceCardThisTurn = true
-            "COMMUNITY_CHEST" -> gameState.hasDrawnCommunityChestCardThisTurn = true
-        }
+        gameState.hasDrawnCardThisTurn = true
 
         sendGameEvent(
             action,
@@ -845,13 +1120,16 @@ class WebSocketBrokerController(
             "DICE_ROLLED",
             eventMessage
         )
+
+        if (!player.inJail) {
+            resolveLandingEffects(action, gameState, player)
+        }
     }
 
     private fun createDiceRoll(action: GameAction): DiceRoll {
         val isCheating = action.payload["cheat"] == "true"
 
         return if (isCheating) {
-            println("DiceDebug: CHEAT DETECTED for player ${action.playerId}! Rolling double six.")
             DiceRoll(6, 6)
         } else {
             DiceRoll(
@@ -876,13 +1154,26 @@ class WebSocketBrokerController(
 
             movePlayerAfterRoll(gameState, player, roll.total)
 
-            player.consecutiveDoublets = 0
-            gameState.phase = GamePhase.BUYING
+            if (player.position == 30) {
+                player.inJail = true
+                player.jailTurns = 0
+                player.consecutiveDoublets = 0
+                eventMessage += " Landed on Go To Jail!"
+                gameState.phase = GamePhase.TURN_END
+            } else {
+                player.consecutiveDoublets = 0
+                gameState.phase = GamePhase.BUYING
+            }
         } else {
             player.jailTurns++
 
             if (player.jailTurns >= 3) {
-                player.money -= 50
+                if (player.money >= 50) {
+                    player.money -= 50
+                } else {
+                    player.money = 0
+                }
+                player.consecutiveDoublets = 0
                 player.inJail = false
                 player.jailTurns = 0
                 eventMessage += " Failed 3rd attempt. Paid 50M to get out!"
@@ -915,7 +1206,7 @@ class WebSocketBrokerController(
                 player.jailTurns = 0
                 player.consecutiveDoublets = 0
                 eventMessage += " Rolled 3 doublets! Go to Jail!"
-                gameState.phase = GamePhase.BUYING
+                gameState.phase = GamePhase.TURN_END
             } else {
                 eventMessage += " Rolled a doublet! Gets another turn."
                 eventMessage = movePlayerAndHandleGoToJail(gameState, player, roll.total, eventMessage)
@@ -975,7 +1266,10 @@ class WebSocketBrokerController(
     ) {
         if (!validateCurrentPlayerTurn(action, gameState)) return
 
-
+        if (gameState.phase == GamePhase.PAYING_RENT) {
+            sendGameError(action, gameState, "Cannot buy property while rent is due.")
+            return
+        }
 
         if (gameState.phase != GamePhase.BUYING) {
             sendGameError(action, gameState, "Property can only be bought during the buying phase.")
@@ -1047,6 +1341,499 @@ class WebSocketBrokerController(
         )
     }
 
+    private fun handlePayJailFine(
+        action: GameAction,
+        gameState: GameState
+    ) {
+        if (!validateCurrentPlayerTurn(action, gameState)) return
+        val player = gameState.currentPlayer!!
+        if (!player.inJail) {
+            sendGameError(action, gameState, "You are not in jail.")
+            return
+        }
+        if (player.money < 50) {
+            sendGameError(action, gameState, "Not enough money to pay the fine.")
+            return
+        }
+        player.money -= 50
+        player.inJail = false
+        player.jailTurns = 0
+        player.consecutiveDoublets = 0
+        sendGameEvent(
+            action,
+            gameState,
+            "JAIL_FINE_PAID",
+            "${player.name} paid 50M to get out of jail."
+        )
+    }
+
+    private fun handleUseJailCard(
+        action: GameAction,
+        gameState: GameState
+    ) {
+        if (!validateCurrentPlayerTurn(action, gameState)) return
+        val player = gameState.currentPlayer!!
+        if (!player.inJail) {
+            sendGameError(action, gameState, "You are not in jail.")
+            return
+        }
+        if (player.getOutOfJailCards <= 0) {
+            sendGameError(action, gameState, "You do not have a Get Out of Jail Free card.")
+            return
+        }
+        player.getOutOfJailCards -= 1
+        player.inJail = false
+        player.jailTurns = 0
+        player.consecutiveDoublets = 0
+        returnJailCardToDeck(gameState)
+        sendGameEvent(
+            action,
+            gameState,
+            "JAIL_CARD_USED",
+            "${player.name} used a Get Out of Jail Free card."
+        )
+    }
+
+    private fun resolveLandingEffects(
+        action: GameAction,
+        gameState: GameState,
+        player: Player
+    ) {
+        val landedField = gameState.fields.getOrNull(player.position) ?: return
+        handleOwnableFieldLanding(action, gameState, player, landedField)
+        handleFreeParkingLanding(action, gameState, player, landedField)
+    }
+
+    private fun handleOwnableFieldLanding(
+        action: GameAction,
+        gameState: GameState,
+        player: Player,
+        landedField: Field
+    ) {
+        if (landedField !is OwnableField) return
+        val ownerId = landedField.ownerId
+        if (ownerId == null || ownerId == player.id || landedField.isMortgaged) return
+        val owner = gameState.players.find { it.id == ownerId }
+        if (owner == null || owner.eliminated) return
+        val rent = when (landedField) {
+            is PropertyField -> RentCalculator.calculatePropertyRent(landedField, gameState.fields, ownerId)
+            is RailroadField -> RentCalculator.calculateRailroadRent(landedField, gameState.fields, ownerId)
+            is UtilityField -> {
+                val diceTotal = gameState.lastDiceRoll?.total ?: 0
+                RentCalculator.calculateUtilityRent(landedField, gameState.fields, ownerId, diceTotal)
+            }
+            else -> 0
+        }
+        if (rent > 0) {
+            gameState.phase = GamePhase.PAYING_RENT
+            gameState.pendingPayment = PendingPayment(
+                amount = rent,
+                source = PaymentSource.RENT,
+                sourceFieldId = landedField.id,
+                creditorPlayerId = ownerId,
+                debtorCanPayAfterAssets = PaymentService.canPayAfterAssets(player, gameState.fields, rent)
+            )
+            messagingTemplate.convertAndSend(
+                "/topic/game/${action.gameId}",
+                GameEvent(gameId = action.gameId, event = GameEvent.RENT_DUE, gameState = gameState)
+            )
+        }
+    }
+
+    private fun handleFreeParkingLanding(
+        action: GameAction,
+        gameState: GameState,
+        player: Player,
+        landedField: Field
+    ) {
+        if (landedField is FreeParkingField && gameState.freeParkingMoney > 0) {
+            player.money += gameState.freeParkingMoney
+            gameState.freeParkingMoney = 0
+            messagingTemplate.convertAndSend(
+                "/topic/game/${action.gameId}",
+                GameEvent(gameId = action.gameId, event = GameEvent.FREE_PARKING_COLLECTED, gameState = gameState)
+            )
+        }
+    }
+
+    // ═══ DEBUG BEGIN ═══
+
+    private fun handleDebugForwardGame(
+        action: GameAction,
+        gameState: GameState
+    ) {
+        if (!validateCurrentPlayerTurn(action, gameState)) return
+
+        if (gameState.phase == GamePhase.WAITING) {
+            sendGameError(action, gameState, "Start the game before using debug forward.")
+            return
+        }
+
+        val players = gameState.players
+        if (players.isEmpty()) {
+            sendGameError(action, gameState, "No players available for debug forward.")
+            return
+        }
+
+        players.forEach { player ->
+            player.money = 10_000
+            player.inJail = false
+            player.jailTurns = 0
+            player.consecutiveDoublets = 0
+            player.ownedPropertyIds.clear()
+        }
+
+        val ownableFields = gameState.fields.filterIsInstance<OwnableField>()
+
+        ownableFields.forEach { field ->
+            field.ownerId = null
+            field.isMortgaged = false
+            if (field is PropertyField) {
+                field.hasHotel = false
+                field.houses = 0
+            }
+        }
+
+        val propertyFields = ownableFields.filterIsInstance<PropertyField>()
+        val colorGroups = propertyFields.groupBy { it.color }
+        colorGroups.entries.forEachIndexed { index, (_, group) ->
+            val owner = players[index % players.size]
+            group.forEach { prop ->
+                prop.ownerId = owner.id
+                prop.houses = 3
+                owner.ownedPropertyIds.add(prop.id)
+            }
+        }
+
+        val railroads = gameState.fields.filterIsInstance<RailroadField>()
+        val utilities = gameState.fields.filterIsInstance<UtilityField>()
+        (railroads + utilities).forEachIndexed { index, field ->
+            val owner = players[index % players.size]
+            field.ownerId = owner.id
+            owner.ownedPropertyIds.add(field.id)
+        }
+
+        gameState.pendingPayment = null
+        gameState.currentActionCard = null
+        gameState.phase = GamePhase.BUYING
+
+        sendGameEvent(
+            action,
+            gameState,
+            "STATE_UPDATED",
+            "DEBUG: game forwarded to endgame-like setup."
+        )
+    }
+
+    private fun handleDebugSetupBankruptcy(
+        action: GameAction,
+        gameState: GameState
+    ) {
+        if (!validateCurrentPlayerTurn(action, gameState)) return
+
+        if (gameState.phase == GamePhase.WAITING) {
+            sendGameError(action, gameState, "Start the game before using debug bankruptcy setup.")
+            return
+        }
+
+        val debtor = gameState.currentPlayer ?: run {
+            sendGameError(action, gameState, "No current player available for debug bankruptcy setup.")
+            return
+        }
+
+        val creditor = gameState.players.firstOrNull { it.id != debtor.id }
+
+        debtor.money = 25
+        gameState.pendingPayment = PendingPayment(
+            amount = 1200,
+            source = PaymentSource.RENT,
+            sourceFieldId = debtor.position,
+            creditorPlayerId = creditor?.id
+        )
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.currentActionCard = null
+
+        sendGameEvent(
+            action,
+            gameState,
+            "RENT_DUE",
+            "DEBUG: bankruptcy setup active."
+        )
+    }
+
+    // ═══ DEBUG END ═══
+
+    private fun recomputeCanPayAfterAssets(gameState: GameState) {
+        val pending = gameState.pendingPayment ?: return
+        val player = gameState.currentPlayer ?: return
+        gameState.pendingPayment = pending.copy(
+            debtorCanPayAfterAssets = PaymentService.canPayAfterAssets(player, gameState.fields, pending.amount)
+        )
+    }
+
+    private fun handlePayRent(
+        action: GameAction,
+        gameState: GameState
+    ) {
+        if (!validateCurrentPlayerTurn(action, gameState)) return
+
+        if (gameState.phase != GamePhase.PAYING_RENT) {
+            sendGameError(action, gameState, "Payment can only be made when payment is due.")
+            return
+        }
+
+        val pending = gameState.pendingPayment
+        if (pending == null) {
+            sendGameError(action, gameState, "No pending payment found.")
+            return
+        }
+        if (pending.amount <= 0) {
+            sendGameError(action, gameState, "No pending payment to pay.")
+            return
+        }
+
+        val player = gameState.currentPlayer!!
+        if (player.isBankrupt()) {
+            sendGameError(action, gameState, "You are bankrupt and cannot pay rent.")
+            return
+        }
+        val fieldId = action.payload["fieldId"]?.toIntOrNull()
+
+        // If the pending payment has a sourceFieldId, validate that it matches the payload
+        pending.sourceFieldId?.let { expectedId ->
+            if (fieldId == null || fieldId != expectedId) {
+                sendGameError(action, gameState, "Invalid fieldId for payment. Expected: $expectedId, got: $fieldId")
+                return
+            }
+        }
+
+        // Process payment based on source
+        when (pending.source) {
+            PaymentSource.RENT -> {
+                // Rent: money goes to the creditor player
+                val creditorId = pending.creditorPlayerId
+                if (creditorId == null) {
+                    sendGameError(action, gameState, "Invalid pending payment: missing creditor for rent.")
+                    return
+                }
+                val creditor = gameState.players.find { it.id == creditorId }
+                if (creditor == null || creditor.isBankrupt()) {
+                    sendGameError(action, gameState, "Creditor not found or bankrupt.")
+                    return
+                }
+                if (player.money < pending.amount) {
+                    sendPaymentFailed(action, gameState, pending.amount)
+                    return
+                }
+                player.money -= pending.amount
+                creditor.money += pending.amount
+            }
+            else -> {
+                sendGameError(action, gameState, "Unsupported payment source: ${pending.source}")
+                return
+            }
+        }
+
+        // Clear pending payment
+        gameState.pendingPayment = null
+        gameState.phase = GamePhase.TURN_END
+
+        messagingTemplate.convertAndSend(
+            "/topic/game/${action.gameId}",
+            GameEvent(gameId = action.gameId, event = GameEvent.RENT_PAID, gameState = gameState)
+        )
+    }
+
+    private fun sendPaymentFailed(action: GameAction, gameState: GameState, amount: Int) {
+        messagingTemplate.convertAndSend(
+            "/topic/game/${action.gameId}",
+            GameEvent(
+                gameId = action.gameId,
+                event = GameEvent.PAYMENT_FAILED,
+                gameState = gameState,
+                message = "Insufficient funds. Need \$$amount but have \$${gameState.currentPlayer?.money ?: 0}."
+            )
+        )
+    }
+
+    private fun handleMortgageProperty(
+        action: GameAction,
+        gameState: GameState
+    ) {
+        if (!validatePlayerCanManageProperty(action, gameState)) return
+
+        val player = gameState.players.find { it.id == action.playerId } ?: return
+        val fieldId = action.payload["fieldId"]?.toIntOrNull() ?: return
+        val field = gameState.fields.find { it.id == fieldId }
+        val hasBuildings = field is PropertyField && (field.houses > 0 || field.hasHotel)
+        val colorGroup = (field as? PropertyField)?.color
+        val siblingHasBuildings = colorGroup != null && gameState.fields
+            .filterIsInstance<PropertyField>()
+            .any { it.color == colorGroup && it.id != field.id && it.ownerId == player.id && (it.houses > 0 || it.hasHotel) }
+
+        if (field is OwnableField && field.ownerId == player.id && !field.isMortgaged && !hasBuildings && !siblingHasBuildings) {
+            PaymentService.mortgageProperty(player, field)
+            recomputeCanPayAfterAssets(gameState)
+            messagingTemplate.convertAndSend(
+                "/topic/game/${action.gameId}",
+                GameEvent(gameId = action.gameId, event = GameEvent.PROPERTY_MORTGAGED, gameState = gameState)
+            )
+        } else if (hasBuildings) {
+            sendGameError(action, gameState, "Sell all houses/hotels before mortgaging.")
+        } else if (siblingHasBuildings) {
+            sendGameError(action, gameState, "Sell all houses/hotels in the color set before mortgaging.")
+        }
+    }
+
+    private fun handleUnmortgageProperty(
+        action: GameAction,
+        gameState: GameState
+    ) {
+        if (gameState.phase == GamePhase.PAYING_RENT) {
+            sendGameError(action, gameState, "Cannot unmortgage while rent is due.")
+            return
+        }
+
+        if (!validatePlayerCanManageProperty(action, gameState)) return
+
+        val player = gameState.players.find { it.id == action.playerId } ?: return
+        val fieldId = action.payload["fieldId"]?.toIntOrNull() ?: return
+        val field = gameState.fields.find { it.id == fieldId }
+
+        if (field is OwnableField && field.ownerId == player.id && field.isMortgaged) {
+            val price = when (field) {
+                is PropertyField -> field.price
+                is RailroadField -> field.price
+                is UtilityField -> field.price
+                else -> 0
+            }
+            val unmortgageCost = ceil(price / 2.0 * 1.1).toInt()
+
+            if (player.money >= unmortgageCost) {
+                PaymentService.unmortgageProperty(player, field)
+                messagingTemplate.convertAndSend(
+                    "/topic/game/${action.gameId}",
+                    GameEvent(gameId = action.gameId, event = GameEvent.PROPERTY_UNMORTGAGED, gameState = gameState)
+                )
+            } else {
+                sendGameError(action, gameState, "Not enough money to unmortgage. Need ${unmortgageCost}M.")
+            }
+        }
+    }
+
+    private fun handleDeclareBankruptcy(
+        action: GameAction,
+        gameState: GameState
+    ) {
+        if (!validateCurrentPlayerTurn(action, gameState)) return
+
+        if (gameState.phase != GamePhase.PAYING_RENT) {
+            sendGameError(action, gameState, "Bankruptcy can only be declared when a payment is due.")
+            return
+        }
+
+        val pending = gameState.pendingPayment
+        if (pending == null || pending.amount <= 0) {
+            sendGameError(action, gameState, "No pending payment to resolve.")
+            return
+        }
+
+        val player = gameState.currentPlayer!!
+
+        if (player.eliminated) {
+            sendGameError(action, gameState, "You have already declared bankruptcy.")
+            return
+        }
+
+        val hasBuildings = gameState.fields
+            .filterIsInstance<PropertyField>()
+            .any { it.ownerId == player.id && (it.houses > 0 || it.hasHotel) }
+        if (hasBuildings) {
+            sendGameError(action, gameState, "Sell all houses and hotels before declaring bankruptcy.")
+            return
+        }
+
+        val hasUnmortgaged = gameState.fields
+            .filterIsInstance<OwnableField>()
+            .any { it.ownerId == player.id && !it.isMortgaged }
+        if (hasUnmortgaged) {
+            sendGameError(action, gameState, "Mortgage all properties before declaring bankruptcy.")
+            return
+        }
+
+        if (PaymentService.canPayAfterAssets(player, gameState.fields, pending.amount)) {
+            sendGameError(action, gameState,
+                "You can still pay by mortgaging properties or selling buildings. Declare bankruptcy only if your total assets are insufficient.")
+            return
+        }
+
+        val creditorId = pending.creditorPlayerId
+        val ownedFields = gameState.fields.filterIsInstance<OwnableField>()
+            .filter { it.ownerId == player.id }
+        val ownedFieldIds = ownedFields.map { (it as Field).id }
+        val totalAssetValue = player.money + ownedFields.sumOf { field ->
+            val price = when (field) {
+                is PropertyField -> field.price
+                is RailroadField -> field.price
+                is UtilityField -> field.price
+                else -> 0
+            }
+            price / 2
+        }
+        val totalDebt = pending.amount
+        val propertiesCount = ownedFields.size
+
+        if (creditorId != null) {
+            val creditor = gameState.players.find { it.id == creditorId }
+            val remainingCash = player.money
+            player.money = 0
+            val transferredIds = mutableListOf<Int>()
+            if (creditor != null) {
+                creditor.money += remainingCash
+                creditor.getOutOfJailCards += player.getOutOfJailCards
+                ownedFields.forEach { field ->
+                    field.ownerId = creditorId
+                    transferredIds.add((field as Field).id)
+                }
+                creditor.ownedPropertyIds.removeAll(transferredIds.toSet())
+                creditor.ownedPropertyIds.addAll(transferredIds)
+            } else {
+                ownedFields.forEach { field ->
+                    field.ownerId = null
+                    field.isMortgaged = false
+                    transferredIds.add((field as Field).id)
+                }
+            }
+            player.getOutOfJailCards = 0
+            player.ownedPropertyIds.clear()
+        } else {
+            player.money = 0
+            gameState.fields.filterIsInstance<OwnableField>()
+                .filter { it.ownerId == player.id }
+                .forEach {
+                    it.ownerId = null
+                    it.isMortgaged = false
+                }
+            player.ownedPropertyIds.clear()
+            player.getOutOfJailCards = 0
+        }
+
+        player.eliminated = true
+        gameState.endCurrentTurn()
+        gameState.advanceTurn()
+        gameState.pendingPayment = null
+        gameState.bankruptcyTotalAssets = totalAssetValue
+        gameState.bankruptcyTotalDebt = totalDebt
+        gameState.bankruptcyPropertiesCount = propertiesCount
+        gameState.bankruptcyOwnedFieldIds = ownedFieldIds
+        gameState.bankruptcyPlayerId = player.id
+
+        messagingTemplate.convertAndSend(
+            "/topic/game/${action.gameId}",
+            GameEvent(gameId = action.gameId, event = GameEvent.BANKRUPTCY_DECLARED, gameState = gameState)
+        )
+    }
+
     private fun validateCurrentPlayerTurn(
         action: GameAction,
         gameState: GameState
@@ -1059,11 +1846,36 @@ class WebSocketBrokerController(
         }
     }
 
+    /**
+     * Validates that [action.playerId] can manage properties (buy/sell houses, mortgage).
+     * Replaces validateCurrentPlayerTurn for property management actions — any active
+     * player may manage their properties at any time after the game has started.
+     */
+    private fun validatePlayerCanManageProperty(
+        action: GameAction,
+        gameState: GameState
+    ): Boolean {
+        if (gameState.phase == GamePhase.WAITING || gameState.phase == GamePhase.FINISHED) {
+            sendGameError(action, gameState, "Property management is only available during the game.")
+            return false
+        }
+        val player = gameState.players.find { it.id == action.playerId }
+        if (player == null) {
+            sendGameError(action, gameState, "Player not found in game.")
+            return false
+        }
+        if (player.isBankrupt()) {
+            sendGameError(action, gameState, "You are bankrupt and cannot manage properties.")
+            return false
+        }
+        return true
+    }
+
     private fun getValidatedProperty(
         action: GameAction,
         gameState: GameState
     ): PropertyField? {
-        if (!validateCurrentPlayerTurn(action, gameState)) return null
+        if (!validatePlayerCanManageProperty(action, gameState)) return null
 
         val fieldId = action.payload["fieldId"]?.toIntOrNull()
         if (fieldId == null || fieldId !in gameState.fields.indices) {

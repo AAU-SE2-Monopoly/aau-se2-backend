@@ -15,7 +15,9 @@ data class Player(
     @JsonSetter(nulls = Nulls.SKIP) var getOutOfJailCards: Int = 0,
     @JsonSetter(nulls = Nulls.SKIP) val ownedPropertyIds: MutableList<Int> = mutableListOf(),
     @JsonSetter(nulls = Nulls.SKIP) var hasCheated: Boolean = false
+    @JsonSetter(nulls = Nulls.SKIP) var eliminated: Boolean = false,
+    @JsonSetter(nulls = Nulls.SKIP) val ownedPropertyIds: MutableList<Int> = mutableListOf()
 ) {
     /** Returns true if the player is bankrupt (no money and no properties). */
-    fun isBankrupt(): Boolean = money <= 0 && ownedPropertyIds.isEmpty()
+    fun isBankrupt(): Boolean = eliminated || (money <= 0 && ownedPropertyIds.isEmpty())
 }
