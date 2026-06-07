@@ -2746,6 +2746,10 @@ class WebSocketBrokerControllerTest {
 
         val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
         assertEquals(GameEvent.RENT_PAID, event.event)
+        assertNotNull(event.message)
+        assertTrue(event.message!!.contains("Alice"))
+        assertTrue(event.message!!.contains("100M"))
+        assertTrue(event.message!!.contains("Bob"))
         assertEquals(400, gameState.players[0].money)
         assertEquals(600, gameState.players[1].money)
         assertNull(gameState.pendingPayment)
@@ -2936,6 +2940,11 @@ class WebSocketBrokerControllerTest {
 
         val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
         assertEquals(GameEvent.BANKRUPTCY_DECLARED, event.event)
+        assertNotNull(event.message)
+        assertTrue(event.message!!.contains("Alice"))
+        assertTrue(event.message!!.contains("bankrupt"))
+        assertTrue(event.message!!.contains("debt"))
+        assertTrue(event.message!!.contains("assets"))
         assertEquals(0, gameState.players[0].money)
         assertTrue(gameState.players[0].eliminated)
         assertEquals("host-2", prop1.ownerId)
@@ -3043,6 +3052,9 @@ class WebSocketBrokerControllerTest {
 
         val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
         assertEquals(GameEvent.PROPERTY_MORTGAGED, event.event)
+        assertNotNull(event.message)
+        assertTrue(event.message!!.contains("Alice"))
+        assertTrue(event.message!!.contains("mortgaged"))
         assertTrue(prop1.isMortgaged)
         assertEquals(500 + 60 / 2, gameState.players[0].money)
     }
@@ -3070,6 +3082,9 @@ class WebSocketBrokerControllerTest {
 
         val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
         assertEquals(GameEvent.PROPERTY_UNMORTGAGED, event.event)
+        assertNotNull(event.message)
+        assertTrue(event.message!!.contains("Alice"))
+        assertTrue(event.message!!.contains("unmortgaged"))
         assertFalse(prop1.isMortgaged)
         assertEquals(500 - 33, gameState.players[0].money)
     }
@@ -4011,6 +4026,11 @@ class WebSocketBrokerControllerTest {
         val events = captureMessages(messagingTemplate, 2)
         val rentEvent = events.find { (it.second as? GameEvent)?.event == GameEvent.RENT_DUE }
         assertNotNull(rentEvent, "Expected RENT_DUE event when landing on owned railroad")
+        val rentEventPayload = rentEvent!!.second as GameEvent
+        assertNotNull(rentEventPayload.message)
+        assertTrue(rentEventPayload.message!!.contains("Bob"))
+        assertTrue(rentEventPayload.message!!.contains("Alice"))
+        assertTrue(rentEventPayload.message!!.contains("rent"))
         assertEquals(GamePhase.PAYING_RENT, gameState.phase)
         assertNotNull(gameState.pendingPayment)
         assertEquals(25, gameState.pendingPayment!!.amount)
@@ -4040,6 +4060,11 @@ class WebSocketBrokerControllerTest {
         val events = captureMessages(messagingTemplate, 2)
         val rentEvent = events.find { (it.second as? GameEvent)?.event == GameEvent.RENT_DUE }
         assertNotNull(rentEvent, "Expected RENT_DUE event when landing on owned utility")
+        val rentEventPayload = rentEvent!!.second as GameEvent
+        assertNotNull(rentEventPayload.message)
+        assertTrue(rentEventPayload.message!!.contains("Bob"))
+        assertTrue(rentEventPayload.message!!.contains("Alice"))
+        assertTrue(rentEventPayload.message!!.contains("rent"))
         assertEquals(GamePhase.PAYING_RENT, gameState.phase)
         assertNotNull(gameState.pendingPayment)
     }
@@ -4920,6 +4945,11 @@ class WebSocketBrokerControllerTest {
         assertEquals(1800, player.money)
         assertEquals(0, gameState.freeParkingMoney)
         assertTrue(events.any { it.event == GameEvent.FREE_PARKING_COLLECTED })
+        val fpEvent = events.find { it.event == GameEvent.FREE_PARKING_COLLECTED }!!
+        assertNotNull(fpEvent.message)
+        assertTrue(fpEvent.message!!.contains("Alice"))
+        assertTrue(fpEvent.message!!.contains("300M"))
+        assertTrue(fpEvent.message!!.contains("Free Parking"))
     }
     @Test
     fun `PAY_TAX should move money to Free Parking and emit TAX_PAID`() {
@@ -4955,6 +4985,10 @@ class WebSocketBrokerControllerTest {
         val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
 
         assertEquals(GameEvent.TAX_PAID, event.event)
+        assertNotNull(event.message)
+        assertTrue(event.message!!.contains("Alice"))
+        assertTrue(event.message!!.contains("100M"))
+        assertTrue(event.message!!.contains("tax"))
         assertEquals(50, player.money)
         assertEquals(100, gameState.freeParkingMoney)
         assertNull(gameState.pendingPayment)
