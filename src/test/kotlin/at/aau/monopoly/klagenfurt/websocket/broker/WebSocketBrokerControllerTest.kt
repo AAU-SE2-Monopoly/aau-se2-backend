@@ -5565,6 +5565,11 @@ class WebSocketBrokerControllerTest {
         assertEquals(PaymentSource.TAX, gameState.pendingPayment!!.source)
         assertEquals(200, gameState.pendingPayment!!.amount)
         assertTrue(events.any { it.event == GameEvent.TAX_DUE })
+        val taxDueEvent = events.find { it.event == GameEvent.TAX_DUE }!!
+        assertNotNull(taxDueEvent.message)
+        assertTrue(taxDueEvent.message!!.contains("Alice"))
+        assertTrue(taxDueEvent.message!!.contains("200"))
+        assertTrue(taxDueEvent.message!!.contains("tax"))
     }
 
     @Test
