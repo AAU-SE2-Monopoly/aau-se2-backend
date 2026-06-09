@@ -329,6 +329,7 @@ class WebSocketBrokerController(
         private val logger = LoggerFactory.getLogger(WebSocketBrokerController::class.java)
         private const val INVALID_FIELD_ID_MESSAGE = "Invalid fieldId."
         private const val NOT_YOUR_TURN_MESSAGE = "It is not your turn."
+        private const val UNKNOWN_PLAYER_MESSAGE = "A player"
     }
 
     /**
@@ -856,7 +857,7 @@ class WebSocketBrokerController(
             if (existingOffer == null) {
                 "${fromPlayer.name} proposed a trade with ${toPlayer.name}."
             } else {
-                "${gameState.players.find { it.id == action.playerId }?.name ?: "A player"} updated the trade."
+                "${gameState.players.find { it.id == action.playerId }?.name ?: UNKNOWN_PLAYER_MESSAGE} updated the trade."
             }
         )
     }
@@ -894,7 +895,7 @@ class WebSocketBrokerController(
                 action,
                 gameState,
                 GameEvent.TRADE_UPDATED,
-                "${reconsideringPlayer?.name ?: "A player"} is reconsidering the trade."
+                "${reconsideringPlayer?.name ?: UNKNOWN_PLAYER_MESSAGE} is reconsidering the trade."
             )
             return
         }
@@ -907,7 +908,7 @@ class WebSocketBrokerController(
                 action,
                 gameState,
                 GameEvent.TRADE_ACCEPTED,
-                "${acceptingPlayer?.name ?: "A player"} accepted the current trade offer."
+                "${acceptingPlayer?.name ?: UNKNOWN_PLAYER_MESSAGE} accepted the current trade offer."
             )
             return
         }
@@ -957,7 +958,7 @@ class WebSocketBrokerController(
             action,
             gameState,
             GameEvent.TRADE_REJECTED,
-            "${player?.name ?: "A player"} declined the trade."
+            "${player?.name ?: UNKNOWN_PLAYER_MESSAGE} declined the trade."
         )
     }
 
