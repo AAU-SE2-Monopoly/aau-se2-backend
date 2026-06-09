@@ -22,6 +22,7 @@ import at.aau.monopoly.klagenfurt.model.field.TaxField
 import at.aau.monopoly.klagenfurt.model.field.UtilityField
 import at.aau.monopoly.klagenfurt.model.PaymentSource
 import at.aau.monopoly.klagenfurt.model.PendingPayment
+import at.aau.monopoly.klagenfurt.model.TradeOffer
 import at.aau.monopoly.klagenfurt.service.PaymentService
 import at.aau.monopoly.klagenfurt.service.RentCalculator
 import kotlin.math.ceil
@@ -198,6 +199,12 @@ class WebSocketBrokerController(
                 "UNMORTGAGE_PROPERTY" -> handleUnmortgageProperty(action, gameState)
 
                 "DECLARE_BANKRUPTCY" -> handleDeclareBankruptcy(action, gameState)
+
+                "PROPOSE_TRADE" -> handleProposeTrade(action, gameState)
+
+                "ACCEPT_TRADE" -> handleAcceptTrade(action, gameState)
+
+                "REJECT_TRADE" -> handleRejectTrade(action, gameState)
 
                 // ═══ DEBUG BEGIN ═══
                 "DEBUG_FORWARD_GAME" -> {
@@ -740,6 +747,223 @@ class WebSocketBrokerController(
                 message = message
             )
         )
+    }
+
+    private fun handleProposeTrade(
+        action: GameAction,
+        gameState: GameState
+    ) {
+        if (gameState.phase == GamePhase.WAITING || gameState.phase == GamePhase.FINISHED) {
+            sendGameError(action, gameState, "Trades are only available during an active game.")
+            return
+        }
+        if (gameState.phase == GamePhase.PAYING_RENT) {
+            sendGameError(action, gameState, "Cannot propose a trade while a payment is due.")
+            return
+        }
+
+        val fromPlayer = gameState.players.find { it.id == action.playerId }
+        val toPlayerId = action.payload["toPlayerId"]?.takeIf { it.isNotBlank() }
+        val toPlayer = gameState.players.find { it.id == toPlayerId }
+        if (fromPlayer == null || toPlayer == null) {
+            sendGameError(action, gameState, "Both trade players must be in the game.")
+            return
+        }
+        if (fromPlayer.id == toPlayer.id) {
+            sendGameError(action, gameState, "You cannot trade with yourself.")
+            return
+        }
+        if (fromPlayer.isBankrupt() || toPlayer.isBankrupt() || fromPlayer.eliminated || toPlayer.eliminated) {
+            sendGameError(action, gameState, "Bankrupt or eliminated players cannot trade.")
+            return
+        }
+
+        val offer = TradeOffer(
+            id = java.util.UUID.randomUUID().toString(),
+            fromPlayerId = fromPlayer.id,
+            toPlayerId = toPlayer.id,
+            offerMoney = action.payload["offerMoney"].toNonNegativeInt("offerMoney", action, gameState) ?: return,
+            requestMoney = action.payload["requestMoney"].toNonNegativeInt("requestMoney", action, gameState) ?: return,
+            offerPropertyIds = parseFieldIds(action.payload["offerPropertyIds"]),
+            requestPropertyIds = parseFieldIds(action.payload["requestPropertyIds"]),
+            offerJailCards = action.payload["offerJailCards"].toNonNegativeInt("offerJailCards", action, gameState) ?: return,
+            requestJailCards = action.payload["requestJailCards"].toNonNegativeInt("requestJailCards", action, gameState) ?: return
+        )
+
+        if (offer.offerMoney == 0 &&
+            offer.requestMoney == 0 &&
+            offer.offerPropertyIds.isEmpty() &&
+            offer.requestPropertyIds.isEmpty() &&
+            offer.offerJailCards == 0 &&
+            offer.requestJailCards == 0
+        ) {
+            sendGameError(action, gameState, "A trade must include money, properties, or jail cards.")
+            return
+        }
+
+        if (!validateTradeOffer(offer, gameState, action)) return
+
+        gameState.pendingTradeOffer = offer
+        sendGameEvent(
+            action,
+            gameState,
+            GameEvent.TRADE_PROPOSED,
+            "${fromPlayer.name} proposed a trade with ${toPlayer.name}."
+        )
+    }
+
+    private fun handleAcceptTrade(
+        action: GameAction,
+        gameState: GameState
+    ) {
+        val offer = gameState.pendingTradeOffer ?: run {
+            sendGameError(action, gameState, "There is no pending trade to accept.")
+            return
+        }
+        if (action.playerId != offer.toPlayerId) {
+            sendGameError(action, gameState, "Only the invited player can accept this trade.")
+            return
+        }
+        val requestedOfferId = action.payload["tradeId"]
+        if (!requestedOfferId.isNullOrBlank() && requestedOfferId != offer.id) {
+            sendGameError(action, gameState, "This trade offer is no longer active.")
+            return
+        }
+        if (!validateTradeOffer(offer, gameState, action)) return
+
+        val fromPlayer = gameState.players.first { it.id == offer.fromPlayerId }
+        val toPlayer = gameState.players.first { it.id == offer.toPlayerId }
+
+        fromPlayer.money -= offer.offerMoney
+        toPlayer.money += offer.offerMoney
+        toPlayer.money -= offer.requestMoney
+        fromPlayer.money += offer.requestMoney
+
+        fromPlayer.getOutOfJailCards -= offer.offerJailCards
+        toPlayer.getOutOfJailCards += offer.offerJailCards
+        toPlayer.getOutOfJailCards -= offer.requestJailCards
+        fromPlayer.getOutOfJailCards += offer.requestJailCards
+
+        transferProperties(gameState, offer.offerPropertyIds, fromPlayer, toPlayer)
+        transferProperties(gameState, offer.requestPropertyIds, toPlayer, fromPlayer)
+
+        gameState.pendingTradeOffer = null
+        recomputeCanPayAfterAssets(gameState)
+
+        sendGameEvent(
+            action,
+            gameState,
+            GameEvent.TRADE_ACCEPTED,
+            "${toPlayer.name} accepted ${fromPlayer.name}'s trade."
+        )
+    }
+
+    private fun handleRejectTrade(
+        action: GameAction,
+        gameState: GameState
+    ) {
+        val offer = gameState.pendingTradeOffer ?: run {
+            sendGameError(action, gameState, "There is no pending trade to reject.")
+            return
+        }
+        if (action.playerId != offer.toPlayerId && action.playerId != offer.fromPlayerId) {
+            sendGameError(action, gameState, "Only involved players can close this trade.")
+            return
+        }
+        val player = gameState.players.find { it.id == action.playerId }
+        gameState.pendingTradeOffer = null
+        sendGameEvent(
+            action,
+            gameState,
+            GameEvent.TRADE_REJECTED,
+            "${player?.name ?: "A player"} declined the trade."
+        )
+    }
+
+    private fun String?.toNonNegativeInt(
+        fieldName: String,
+        action: GameAction,
+        gameState: GameState
+    ): Int? {
+        val value = this?.takeIf { it.isNotBlank() } ?: return 0
+        val parsed = value.toIntOrNull()
+        if (parsed == null || parsed < 0) {
+            sendGameError(action, gameState, "$fieldName must be a non-negative number.")
+            return null
+        }
+        return parsed
+    }
+
+    private fun parseFieldIds(rawValue: String?): List<Int> {
+        return rawValue
+            ?.split(",", ";", "|")
+            ?.mapNotNull { it.trim().takeIf(String::isNotBlank)?.toIntOrNull() }
+            ?.distinct()
+            ?: emptyList()
+    }
+
+    private fun validateTradeOffer(
+        offer: TradeOffer,
+        gameState: GameState,
+        action: GameAction
+    ): Boolean {
+        val fromPlayer = gameState.players.find { it.id == offer.fromPlayerId }
+        val toPlayer = gameState.players.find { it.id == offer.toPlayerId }
+        if (fromPlayer == null || toPlayer == null) {
+            sendGameError(action, gameState, "Both trade players must still be in the game.")
+            return false
+        }
+        if (fromPlayer.money < offer.offerMoney || toPlayer.money < offer.requestMoney) {
+            sendGameError(action, gameState, "One player no longer has enough money for this trade.")
+            return false
+        }
+        if (fromPlayer.getOutOfJailCards < offer.offerJailCards || toPlayer.getOutOfJailCards < offer.requestJailCards) {
+            sendGameError(action, gameState, "One player no longer has enough Get Out of Jail Free cards.")
+            return false
+        }
+        if (!validateTradeProperties(offer.offerPropertyIds, fromPlayer.id, gameState, action)) return false
+        if (!validateTradeProperties(offer.requestPropertyIds, toPlayer.id, gameState, action)) return false
+
+        return true
+    }
+
+    private fun validateTradeProperties(
+        fieldIds: List<Int>,
+        ownerId: String,
+        gameState: GameState,
+        action: GameAction
+    ): Boolean {
+        fieldIds.forEach { fieldId ->
+            val field = gameState.fields.getOrNull(fieldId)
+            if (field !is OwnableField) {
+                sendGameError(action, gameState, "Only ownable fields can be traded.")
+                return false
+            }
+            if (field.ownerId != ownerId) {
+                sendGameError(action, gameState, "${(field as Field).name} is not owned by the expected player.")
+                return false
+            }
+            if (field is PropertyField && (field.houses > 0 || field.hasHotel)) {
+                sendGameError(action, gameState, "Sell all buildings on ${field.name} before trading it.")
+                return false
+            }
+        }
+        return true
+    }
+
+    private fun transferProperties(
+        gameState: GameState,
+        fieldIds: List<Int>,
+        fromPlayer: Player,
+        toPlayer: Player
+    ) {
+        fieldIds.forEach { fieldId ->
+            val field = gameState.fields.getOrNull(fieldId) as? OwnableField ?: return@forEach
+            field.ownerId = toPlayer.id
+            fromPlayer.ownedPropertyIds.remove(fieldId)
+            toPlayer.ownedPropertyIds.remove(fieldId)
+            toPlayer.ownedPropertyIds.add(fieldId)
+        }
     }
 
     private fun handleEndTurn(
