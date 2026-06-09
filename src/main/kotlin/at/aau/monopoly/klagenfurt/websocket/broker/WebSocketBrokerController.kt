@@ -884,6 +884,21 @@ class WebSocketBrokerController(
             return
         }
 
+        if (action.playerId in offer.acceptedByPlayerIds) {
+            val updatedOffer = offer.copy(
+                acceptedByPlayerIds = offer.acceptedByPlayerIds.filterNot { it == action.playerId }
+            )
+            gameState.pendingTradeOffer = updatedOffer
+            val reconsideringPlayer = gameState.players.find { it.id == action.playerId }
+            sendGameEvent(
+                action,
+                gameState,
+                GameEvent.TRADE_UPDATED,
+                "${reconsideringPlayer?.name ?: "A player"} is reconsidering the trade."
+            )
+            return
+        }
+
         val acceptedIds = (offer.acceptedByPlayerIds + action.playerId).distinct()
         if (!acceptedIds.contains(offer.fromPlayerId) || !acceptedIds.contains(offer.toPlayerId)) {
             gameState.pendingTradeOffer = offer.copy(acceptedByPlayerIds = acceptedIds)
