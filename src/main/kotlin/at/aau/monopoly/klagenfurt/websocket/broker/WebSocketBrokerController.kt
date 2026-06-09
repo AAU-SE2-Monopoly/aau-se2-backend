@@ -779,6 +779,7 @@ class WebSocketBrokerController(
 
             gameState.endCurrentTurn()
             gameState.advanceTurn()
+            checkAndHandleGameOver(gameState)
 
             sendGameEvent(
                 action,
@@ -1875,10 +1876,12 @@ class WebSocketBrokerController(
         gameState.bankruptcyOwnedFieldIds = ownedFieldIds
         gameState.bankruptcyPlayerId = player.id
 
+
         messagingTemplate.convertAndSend(
             "/topic/game/${action.gameId}",
             GameEvent(gameId = action.gameId, event = GameEvent.BANKRUPTCY_DECLARED, gameState = gameState)
         )
+        checkAndHandleGameOver(gameState)
     }
 
     private fun validateCurrentPlayerTurn(
@@ -1995,5 +1998,24 @@ class WebSocketBrokerController(
                 "${reporter.name} falsely accused ${reported.name} of cheating, and pays them a 500M fine!"
             )
         }
+    }
+
+    private fun checkAndHandleGameOver(gameState: GameState) {
+        if (!gameState.isGameOver()) return
+
+        gameState.phase = GamePhase.FINISHED
+        gameState.pendingPayment = null
+        gameState.currentActionCard = null
+        gameState.lastDiceRoll = null
+
+        messagingTemplate.convertAndSend(
+            "/topic/game/${gameState.gameId}",
+            GameEvent(
+                gameId = gameState.gameId,
+                event = GameEvent.GAME_OVER,
+                gameState = gameState,
+                message = "Game over"
+            )
+        )
     }
 }

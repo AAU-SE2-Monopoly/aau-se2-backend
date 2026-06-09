@@ -450,15 +450,30 @@ class WebSocketBrokerControllerTest {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
-        gameState.advanceTurn()
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.ROLLING
+        gameState.currentPlayer!!.position = 1
 
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "ROLL_DICE"))
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "ROLL_DICE",
+                payload = mutableMapOf("cheat" to "true")
+            )
+        )
 
         val payCaptor = ArgumentCaptor.forClass(Any::class.java)
         Mockito.verify(messagingTemplate, Mockito.atLeastOnce())
             .convertAndSend(Mockito.any(String::class.java), payCaptor.capture())
-        val event = payCaptor.allValues.filterIsInstance<GameEvent>().last()
+
+        val event = payCaptor.allValues
+            .filterIsInstance<GameEvent>()
+            .first { it.event == "DICE_ROLLED" }
+
         assertNotNull(event.gameState!!.lastDiceRoll)
+        assertEquals(6, event.gameState.lastDiceRoll!!.die1)
+        assertEquals(6, event.gameState.lastDiceRoll!!.die2)
         assertTrue(event.message!!.contains("rolled"))
         assertTrue(event.message.contains("="))
     }
@@ -830,8 +845,11 @@ class WebSocketBrokerControllerTest {
             )
         )
 
-        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals("TURN_ENDED", event.event)
+        val events = captureLastMessages(messagingTemplate, 2)
+            .map { it.second as GameEvent }
+
+        assertTrue(events.any { it.event == "TURN_ENDED" })
+        assertTrue(events.any { it.event == GameEvent.GAME_OVER })
     }
 
     @Test
@@ -851,8 +869,11 @@ class WebSocketBrokerControllerTest {
             )
         )
 
-        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals("TURN_ENDED", event.event)
+        val events = captureLastMessages(messagingTemplate, 2)
+            .map { it.second as GameEvent }
+
+        assertTrue(events.any { it.event == "TURN_ENDED" })
+        assertTrue(events.any { it.event == GameEvent.GAME_OVER })
     }
 
     @Test
@@ -2934,8 +2955,10 @@ class WebSocketBrokerControllerTest {
             )
         )
 
-        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals(GameEvent.BANKRUPTCY_DECLARED, event.event)
+        val events = captureLastMessages(messagingTemplate, 2)
+            .map { it.second as GameEvent }
+
+        assertTrue(events.any { it.event == GameEvent.BANKRUPTCY_DECLARED })
         assertEquals(0, gameState.players[0].money)
         assertTrue(gameState.players[0].eliminated)
         assertEquals("host-2", prop1.ownerId)
@@ -3373,8 +3396,11 @@ class WebSocketBrokerControllerTest {
 
         controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "DECLARE_BANKRUPTCY"))
 
-        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals(GameEvent.BANKRUPTCY_DECLARED, event.event)
+        val events = captureLastMessages(messagingTemplate, 2)
+            .map { it.second as GameEvent }
+
+        assertTrue(events.any { it.event == GameEvent.BANKRUPTCY_DECLARED })
+        assertTrue(events.any { it.event == GameEvent.GAME_OVER })
         assertEquals(0, gameState.players[0].money)
         assertNull(prop.ownerId)
     }
@@ -5572,6 +5598,84 @@ class WebSocketBrokerControllerTest {
         assertTrue(events.any { it.event == GameEvent.FREE_PARKING_COLLECTED })
     }
 
+    @Test
+    fun `DECLARE_BANKRUPTCY with only one active player left should send GAME_OVER`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500, iconId = "lindwurm"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", money = 0, iconId = "gti"))
+
+        gameState.currentPlayerIndex = 1
+        val bankruptPlayerId = gameState.currentPlayer!!.id
+
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(
+            amount = 200,
+            source = PaymentSource.TAX,
+            sourceFieldId = 4,
+            creditorPlayerId = null,
+            debtorCanPayAfterAssets = false
+        )
+
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = bankruptPlayerId,
+                action = "DECLARE_BANKRUPTCY"
+            )
+        )
+
+        val events = captureLastMessages(messagingTemplate, 2)
+            .map { it.second as GameEvent }
+
+        assertTrue(gameState.players.first { it.id == bankruptPlayerId }.eliminated)
+        assertEquals(GamePhase.FINISHED, gameState.phase)
+        assertTrue(events.any { it.event == GameEvent.BANKRUPTCY_DECLARED })
+        assertTrue(events.any { it.event == GameEvent.GAME_OVER })
+    }
+
+    @Test
+    fun `DECLARE_BANKRUPTCY with more than one active player left should not send GAME_OVER`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500, iconId = "lindwurm"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", money = 0, iconId = "gti"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-3", name = "Charlie", money = 1500, iconId = "ironman"))
+
+        gameState.currentPlayerIndex = 1
+        val bankruptPlayerId = gameState.currentPlayer!!.id
+
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(
+            amount = 200,
+            source = PaymentSource.TAX,
+            sourceFieldId = 4,
+            creditorPlayerId = null,
+            debtorCanPayAfterAssets = false
+        )
+
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = bankruptPlayerId,
+                action = "DECLARE_BANKRUPTCY"
+            )
+        )
+
+        val events = captureLastMessages(messagingTemplate, 1)
+            .map { it.second as GameEvent }
+
+        assertTrue(gameState.players.first { it.id == bankruptPlayerId }.eliminated)
+        assertNotEquals(GamePhase.FINISHED, gameState.phase)
+        assertTrue(events.any { it.event == GameEvent.BANKRUPTCY_DECLARED })
+        assertTrue(events.none { it.event == GameEvent.GAME_OVER })
+    }
 }
 
 

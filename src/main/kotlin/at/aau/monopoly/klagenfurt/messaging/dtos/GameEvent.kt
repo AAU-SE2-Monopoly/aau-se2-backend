@@ -28,5 +28,6 @@ data class GameEvent(
         const val HOUSE_SOLD = "HOUSE_SOLD"
         const val BANKRUPTCY_DECLARED = "BANKRUPTCY_DECLARED"
         const val FREE_PARKING_COLLECTED = "FREE_PARKING_COLLECTED"
+        const val GAME_OVER = "GAME_OVER"
     }
 }
