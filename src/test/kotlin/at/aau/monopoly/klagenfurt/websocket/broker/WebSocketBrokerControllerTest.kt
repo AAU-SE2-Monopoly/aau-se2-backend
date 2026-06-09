@@ -6401,8 +6401,7 @@ class WebSocketBrokerControllerTest {
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
         gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
-        gameState.currentPlayerIndex = -1
-        gameState.advanceTurn()
+        gameState.currentPlayerIndex = 0
         gameState.phase = GamePhase.BUYING
 
         controller.handleAction(
@@ -6429,6 +6428,222 @@ class WebSocketBrokerControllerTest {
         assertEquals("ERROR", event.event)
         assertTrue(event.message!!.contains("Add money"))
         assertTrue(gameState.pendingTradeOffer!!.acceptedByPlayerIds.isEmpty())
+    }
+
+    @Test
+    fun `PROPOSE_TRADE rejects inactive phases and pending payments`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
+        gameState.currentPlayerIndex = 0
+
+        controller.handleAction(
+            GameAction(gameState.gameId, "host-1", "PROPOSE_TRADE", mutableMapOf("toPlayerId" to "player-2"))
+        )
+        var event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("active game"))
+
+        gameState.phase = GamePhase.PAYING_RENT
+        Mockito.clearInvocations(messagingTemplate)
+        controller.handleAction(
+            GameAction(gameState.gameId, "host-1", "PROPOSE_TRADE", mutableMapOf("toPlayerId" to "player-2"))
+        )
+        event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("payment is due"))
+    }
+
+    @Test
+    fun `PROPOSE_TRADE rejects invalid live update participants and changed target`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-3", name = "Charlie", iconId = "gti"))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.BUYING
+
+        controller.handleAction(
+            GameAction(gameState.gameId, "host-1", "PROPOSE_TRADE", mutableMapOf("toPlayerId" to "player-2"))
+        )
+
+        Mockito.clearInvocations(messagingTemplate)
+        controller.handleAction(
+            GameAction(gameState.gameId, "player-3", "PROPOSE_TRADE", mutableMapOf("toPlayerId" to "player-2"))
+        )
+        var event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("Only involved players"))
+
+        Mockito.clearInvocations(messagingTemplate)
+        controller.handleAction(
+            GameAction(gameState.gameId, "player-2", "PROPOSE_TRADE", mutableMapOf("toPlayerId" to "player-3"))
+        )
+        event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("Only one trade"))
+
+        gameState.currentPlayerIndex = 1
+        Mockito.clearInvocations(messagingTemplate)
+        controller.handleAction(
+            GameAction(gameState.gameId, "player-2", "PROPOSE_TRADE", mutableMapOf("toPlayerId" to "player-2"))
+        )
+        event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("no longer active"))
+    }
+
+    @Test
+    fun `PROPOSE_TRADE rejects missing and eliminated trade players`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee", eliminated = true))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.BUYING
+
+        controller.handleAction(
+            GameAction(gameState.gameId, "host-1", "PROPOSE_TRADE", mutableMapOf("toPlayerId" to ""))
+        )
+        var event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("Both trade players"))
+
+        Mockito.clearInvocations(messagingTemplate)
+        controller.handleAction(
+            GameAction(gameState.gameId, "host-1", "PROPOSE_TRADE", mutableMapOf("toPlayerId" to "player-2"))
+        )
+        event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("Bankrupt or eliminated"))
+    }
+
+    @Test
+    fun `PROPOSE_TRADE rejects invalid request money and jail card amounts`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.BUYING
+
+        controller.handleAction(
+            GameAction(gameState.gameId, "host-1", "PROPOSE_TRADE", mutableMapOf("toPlayerId" to "player-2", "requestMoney" to "abc"))
+        )
+        var event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("requestMoney must be"))
+
+        Mockito.clearInvocations(messagingTemplate)
+        controller.handleAction(
+            GameAction(gameState.gameId, "host-1", "PROPOSE_TRADE", mutableMapOf("toPlayerId" to "player-2", "offerJailCards" to "-1"))
+        )
+        event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("offerJailCards must be"))
+    }
+
+    @Test
+    fun `ACCEPT_TRADE rejects missing offer outsider and stale resources`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm", getOutOfJailCards = 1))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-3", name = "Charlie", iconId = "gti"))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.BUYING
+
+        controller.handleAction(GameAction(gameState.gameId, "host-1", "ACCEPT_TRADE"))
+        var event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("no pending trade"))
+
+        controller.handleAction(
+            GameAction(gameState.gameId, "host-1", "PROPOSE_TRADE", mutableMapOf("toPlayerId" to "player-2", "offerJailCards" to "1"))
+        )
+
+        Mockito.clearInvocations(messagingTemplate)
+        controller.handleAction(GameAction(gameState.gameId, "player-3", "ACCEPT_TRADE"))
+        event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("Only involved players"))
+
+        gameState.players.first { it.id == "host-1" }.getOutOfJailCards = 0
+        Mockito.clearInvocations(messagingTemplate)
+        controller.handleAction(GameAction(gameState.gameId, "player-2", "ACCEPT_TRADE"))
+        event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("Get Out of Jail Free cards"))
+    }
+
+    @Test
+    fun `ACCEPT_TRADE rejects when trade participant left the game`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm", money = 1000))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee", money = 1000))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.BUYING
+
+        controller.handleAction(
+            GameAction(gameState.gameId, "host-1", "PROPOSE_TRADE", mutableMapOf("toPlayerId" to "player-2", "offerMoney" to "50"))
+        )
+        gameState.players.removeIf { it.id == "player-2" }
+
+        Mockito.clearInvocations(messagingTemplate)
+        controller.handleAction(GameAction(gameState.gameId, "player-2", "ACCEPT_TRADE"))
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("must still be in the game"))
+    }
+
+    @Test
+    fun `ACCEPT_TRADE completes property swap and keeps ownership lists consistent`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm", money = 1000))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee", money = 1000))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.BUYING
+
+        val alice = gameState.players.first { it.id == "host-1" }
+        val bob = gameState.players.first { it.id == "player-2" }
+        (gameState.fields[1] as PropertyField).ownerId = "host-1"
+        (gameState.fields[3] as PropertyField).ownerId = "host-1"
+        (gameState.fields[6] as PropertyField).ownerId = "player-2"
+        alice.ownedPropertyIds.addAll(listOf(1, 3))
+        bob.ownedPropertyIds.add(6)
+
+        controller.handleAction(
+            GameAction(
+                gameState.gameId,
+                "host-1",
+                "PROPOSE_TRADE",
+                mutableMapOf(
+                    "toPlayerId" to "player-2",
+                    "offerPropertyIds" to "1; 3; 3; ignored",
+                    "requestPropertyIds" to "6"
+                )
+            )
+        )
+        val tradeId = gameState.pendingTradeOffer!!.id
+
+        controller.handleAction(GameAction(gameState.gameId, "host-1", "ACCEPT_TRADE", mutableMapOf("tradeId" to tradeId)))
+        controller.handleAction(GameAction(gameState.gameId, "player-2", "ACCEPT_TRADE", mutableMapOf("tradeId" to tradeId)))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals(GameEvent.TRADE_COMPLETED, event.event)
+        assertEquals("player-2", (gameState.fields[1] as PropertyField).ownerId)
+        assertEquals("player-2", (gameState.fields[3] as PropertyField).ownerId)
+        assertEquals("host-1", (gameState.fields[6] as PropertyField).ownerId)
+        assertFalse(alice.ownedPropertyIds.contains(1))
+        assertFalse(alice.ownedPropertyIds.contains(3))
+        assertTrue(alice.ownedPropertyIds.contains(6))
+        assertTrue(bob.ownedPropertyIds.contains(1))
+        assertTrue(bob.ownedPropertyIds.contains(3))
+        assertFalse(bob.ownedPropertyIds.contains(6))
     }
 
 }
