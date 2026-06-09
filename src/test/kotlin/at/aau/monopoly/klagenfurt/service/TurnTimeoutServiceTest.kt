@@ -2,6 +2,7 @@ package at.aau.monopoly.klagenfurt.service
 
 import at.aau.monopoly.klagenfurt.controller.GameController
 import at.aau.monopoly.klagenfurt.model.Player
+import at.aau.monopoly.klagenfurt.model.TradeOffer
 import at.aau.monopoly.klagenfurt.model.enums.GamePhase
 import at.aau.monopoly.klagenfurt.websocket.broker.WebSocketBrokerController
 import org.junit.jupiter.api.Test
@@ -83,6 +84,26 @@ class TurnTimeoutServiceTest {
 
         Mockito.verify(broker).forceEndTurn(game.gameId)
     }
+
+    @Test
+    fun `sweep refreshes timer and does not force turn while trade is active`() {
+        val (service, gameController, broker) = setup()
+        val game = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(game.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
+        gameController.joinGame(game.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
+        game.currentPlayerIndex = 0
+        game.phase = GamePhase.BUYING
+        game.turnTimerStartedAtMillis = System.currentTimeMillis() - 61_000L
+        val oldStartedAt = game.turnTimerStartedAtMillis
+        game.pendingTradeOffer = TradeOffer(
+            id = "trade-1",
+            fromPlayerId = "host-1",
+            toPlayerId = "player-2"
+        )
+
+        service.sweepExpiredTurns()
+
+        Mockito.verify(broker, Mockito.never()).forceEndTurn(Mockito.anyString())
+        org.junit.jupiter.api.Assertions.assertTrue(game.turnTimerStartedAtMillis > oldStartedAt)
+    }
 }
-
-

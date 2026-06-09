@@ -1812,8 +1812,7 @@ class WebSocketBrokerControllerTest {
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
         val player = gameState.players[0]
-        gameState.currentPlayerIndex = -1
-        gameState.advanceTurn()
+        gameState.currentPlayerIndex = 0
 
         var attempts = 0
         while(true) {
@@ -5572,6 +5571,255 @@ class WebSocketBrokerControllerTest {
         assertTrue(events.any { it.event == GameEvent.FREE_PARKING_COLLECTED })
     }
 
+    @Test
+    fun `PROPOSE_TRADE starts empty live offer on current player's turn`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.BUYING
+
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "PROPOSE_TRADE",
+                payload = mutableMapOf("toPlayerId" to "player-2")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        val offer = gameState.pendingTradeOffer
+
+        assertEquals(GameEvent.TRADE_PROPOSED, event.event)
+        assertNotNull(offer)
+        assertEquals("host-1", offer!!.fromPlayerId)
+        assertEquals("player-2", offer.toPlayerId)
+        assertEquals(0, offer.offerMoney)
+        assertEquals(0, offer.requestMoney)
+        assertTrue(offer.offerPropertyIds.isEmpty())
+        assertTrue(offer.requestPropertyIds.isEmpty())
+        assertTrue(offer.acceptedByPlayerIds.isEmpty())
+    }
+
+    @Test
+    fun `PROPOSE_TRADE rejects starting trade when it is not your turn`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.BUYING
+
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "player-2",
+                action = "PROPOSE_TRADE",
+                payload = mutableMapOf("toPlayerId" to "host-1")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("only be started on your turn"))
+        assertNull(gameState.pendingTradeOffer)
+    }
+
+    @Test
+    fun `PROPOSE_TRADE live updates only mutate the acting player's side`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm", money = 1000))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee", money = 1000))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.BUYING
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "PROPOSE_TRADE",
+                payload = mutableMapOf("toPlayerId" to "player-2")
+            )
+        )
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "PROPOSE_TRADE",
+                payload = mutableMapOf(
+                    "toPlayerId" to "player-2",
+                    "offerMoney" to "100",
+                    "requestMoney" to "999"
+                )
+            )
+        )
+
+        var offer = gameState.pendingTradeOffer!!
+        assertEquals(100, offer.offerMoney)
+        assertEquals(0, offer.requestMoney)
+        assertEquals(GameEvent.TRADE_UPDATED, (captureLastMessages(messagingTemplate, 1).single().second as GameEvent).event)
+
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "player-2",
+                action = "PROPOSE_TRADE",
+                payload = mutableMapOf(
+                    "toPlayerId" to "player-2",
+                    "offerMoney" to "777",
+                    "requestMoney" to "50"
+                )
+            )
+        )
+
+        offer = gameState.pendingTradeOffer!!
+        assertEquals(100, offer.offerMoney)
+        assertEquals(50, offer.requestMoney)
+        assertEquals(GameEvent.TRADE_UPDATED, (captureLastMessages(messagingTemplate, 1).single().second as GameEvent).event)
+    }
+
+    @Test
+    fun `ACCEPT_TRADE toggles accepted state off when player reconsiders`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm", money = 1000))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee", money = 1000))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.BUYING
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "PROPOSE_TRADE",
+                payload = mutableMapOf("toPlayerId" to "player-2", "offerMoney" to "100")
+            )
+        )
+        val tradeId = gameState.pendingTradeOffer!!.id
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "player-2",
+                action = "ACCEPT_TRADE",
+                payload = mutableMapOf("tradeId" to tradeId)
+            )
+        )
+
+        assertEquals(listOf("player-2"), gameState.pendingTradeOffer!!.acceptedByPlayerIds)
+        assertEquals(GameEvent.TRADE_ACCEPTED, (captureLastMessages(messagingTemplate, 1).single().second as GameEvent).event)
+
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "player-2",
+                action = "ACCEPT_TRADE",
+                payload = mutableMapOf("tradeId" to tradeId)
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertTrue(gameState.pendingTradeOffer!!.acceptedByPlayerIds.isEmpty())
+        assertEquals(GameEvent.TRADE_UPDATED, event.event)
+        assertTrue(event.message!!.contains("reconsidering"))
+    }
+
+    @Test
+    fun `ACCEPT_TRADE completes trade after both players accept current offer`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm", money = 1000))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee", money = 500))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.BUYING
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "PROPOSE_TRADE",
+                payload = mutableMapOf("toPlayerId" to "player-2", "offerMoney" to "100")
+            )
+        )
+        val tradeId = gameState.pendingTradeOffer!!.id
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "ACCEPT_TRADE",
+                payload = mutableMapOf("tradeId" to tradeId)
+            )
+        )
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "player-2",
+                action = "ACCEPT_TRADE",
+                payload = mutableMapOf("tradeId" to tradeId)
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        val alice = gameState.players.first { it.id == "host-1" }
+        val bob = gameState.players.first { it.id == "player-2" }
+
+        assertEquals(GameEvent.TRADE_COMPLETED, event.event)
+        assertNull(gameState.pendingTradeOffer)
+        assertEquals(900, alice.money)
+        assertEquals(600, bob.money)
+    }
+
+    @Test
+    fun `ACCEPT_TRADE rejects empty live offer`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
+        gameState.currentPlayerIndex = -1
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.BUYING
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "PROPOSE_TRADE",
+                payload = mutableMapOf("toPlayerId" to "player-2")
+            )
+        )
+        val tradeId = gameState.pendingTradeOffer!!.id
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "player-2",
+                action = "ACCEPT_TRADE",
+                payload = mutableMapOf("tradeId" to tradeId)
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("Add money"))
+        assertTrue(gameState.pendingTradeOffer!!.acceptedByPlayerIds.isEmpty())
+    }
+
 }
-
-
