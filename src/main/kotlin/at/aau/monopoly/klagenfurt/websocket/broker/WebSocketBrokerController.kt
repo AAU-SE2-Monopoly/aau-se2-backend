@@ -169,9 +169,8 @@ class WebSocketBrokerController(
 
                 "PAY_JAIL_FINE" -> handlePayJailFine(action, gameState)
 
-            "REPORT_CHEATER" -> handleReportCheater(action, gameState)
+                "REPORT_CHEATER" -> handleReportCheater(action, gameState)
 
-           
                 "USE_JAIL_CARD" -> handleUseJailCard(action, gameState)
 
                 "END_TURN" -> handleEndTurn(action, gameState)
@@ -1154,8 +1153,9 @@ class WebSocketBrokerController(
                 "${player.name}'s turn was auto-completed after inactivity."
             )
             gameController.persist(gameId)
-            return true
+            return@synchronized true
         }
+        return true
     }
 
     /** Draws (if needed) and executes a card for a timed-out player on a card field. */
@@ -2002,7 +2002,8 @@ class WebSocketBrokerController(
                      PaymentSource.TAX -> GameEvent.TAX_PAID
                      else -> GameEvent.RENT_PAID
                  },
-                 gameState = gameState)
+                 gameState = gameState
+             )
          )
     }
 
