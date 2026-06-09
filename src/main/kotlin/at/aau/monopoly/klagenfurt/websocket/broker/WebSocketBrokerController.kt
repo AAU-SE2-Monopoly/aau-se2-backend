@@ -762,11 +762,36 @@ class WebSocketBrokerController(
             return
         }
 
-        val fromPlayer = gameState.players.find { it.id == action.playerId }
+        val currentPlayer = gameState.currentPlayer
+        val existingOffer = gameState.pendingTradeOffer
+        if (existingOffer == null && currentPlayer?.id != action.playerId) {
+            sendGameError(action, gameState, "Trades can only be started on your turn.")
+            return
+        }
+        if (existingOffer != null && currentPlayer?.id != existingOffer.fromPlayerId) {
+            sendGameError(action, gameState, "This trade is no longer active for the current turn.")
+            return
+        }
+
+        val fromPlayerId = existingOffer?.fromPlayerId ?: action.playerId
+        val fromPlayer = gameState.players.find { it.id == fromPlayerId }
         val toPlayerId = action.payload["toPlayerId"]?.takeIf { it.isNotBlank() }
         val toPlayer = gameState.players.find { it.id == toPlayerId }
         if (fromPlayer == null || toPlayer == null) {
             sendGameError(action, gameState, "Both trade players must be in the game.")
+            return
+        }
+        if (existingOffer != null &&
+            action.playerId != existingOffer.fromPlayerId &&
+            action.playerId != existingOffer.toPlayerId
+        ) {
+            sendGameError(action, gameState, "Only involved players can update this trade.")
+            return
+        }
+        if (existingOffer != null &&
+            (existingOffer.fromPlayerId != fromPlayer.id || existingOffer.toPlayerId != toPlayer.id)
+        ) {
+            sendGameError(action, gameState, "Only one trade can be active at a time.")
             return
         }
         if (fromPlayer.id == toPlayer.id) {
@@ -778,28 +803,48 @@ class WebSocketBrokerController(
             return
         }
 
+        val submittedOfferMoney = action.payload["offerMoney"].toNonNegativeInt("offerMoney", action, gameState) ?: return
+        val submittedRequestMoney = action.payload["requestMoney"].toNonNegativeInt("requestMoney", action, gameState) ?: return
+        val submittedOfferPropertyIds = parseFieldIds(action.payload["offerPropertyIds"])
+        val submittedRequestPropertyIds = parseFieldIds(action.payload["requestPropertyIds"])
+        val submittedOfferJailCards = action.payload["offerJailCards"].toNonNegativeInt("offerJailCards", action, gameState) ?: return
+        val submittedRequestJailCards = action.payload["requestJailCards"].toNonNegativeInt("requestJailCards", action, gameState) ?: return
+
         val offer = TradeOffer(
-            id = java.util.UUID.randomUUID().toString(),
+            id = existingOffer?.id ?: java.util.UUID.randomUUID().toString(),
             fromPlayerId = fromPlayer.id,
             toPlayerId = toPlayer.id,
-            offerMoney = action.payload["offerMoney"].toNonNegativeInt("offerMoney", action, gameState) ?: return,
-            requestMoney = action.payload["requestMoney"].toNonNegativeInt("requestMoney", action, gameState) ?: return,
-            offerPropertyIds = parseFieldIds(action.payload["offerPropertyIds"]),
-            requestPropertyIds = parseFieldIds(action.payload["requestPropertyIds"]),
-            offerJailCards = action.payload["offerJailCards"].toNonNegativeInt("offerJailCards", action, gameState) ?: return,
-            requestJailCards = action.payload["requestJailCards"].toNonNegativeInt("requestJailCards", action, gameState) ?: return
+            offerMoney = if (existingOffer == null || action.playerId == fromPlayer.id) {
+                submittedOfferMoney
+            } else {
+                existingOffer.offerMoney
+            },
+            requestMoney = if (existingOffer == null || action.playerId == toPlayer.id) {
+                submittedRequestMoney
+            } else {
+                existingOffer.requestMoney
+            },
+            offerPropertyIds = if (existingOffer == null || action.playerId == fromPlayer.id) {
+                submittedOfferPropertyIds
+            } else {
+                existingOffer.offerPropertyIds
+            },
+            requestPropertyIds = if (existingOffer == null || action.playerId == toPlayer.id) {
+                submittedRequestPropertyIds
+            } else {
+                existingOffer.requestPropertyIds
+            },
+            offerJailCards = if (existingOffer == null || action.playerId == fromPlayer.id) {
+                submittedOfferJailCards
+            } else {
+                existingOffer.offerJailCards
+            },
+            requestJailCards = if (existingOffer == null || action.playerId == toPlayer.id) {
+                submittedRequestJailCards
+            } else {
+                existingOffer.requestJailCards
+            }
         )
-
-        if (offer.offerMoney == 0 &&
-            offer.requestMoney == 0 &&
-            offer.offerPropertyIds.isEmpty() &&
-            offer.requestPropertyIds.isEmpty() &&
-            offer.offerJailCards == 0 &&
-            offer.requestJailCards == 0
-        ) {
-            sendGameError(action, gameState, "A trade must include money, properties, or jail cards.")
-            return
-        }
 
         if (!validateTradeOffer(offer, gameState, action)) return
 
@@ -807,8 +852,12 @@ class WebSocketBrokerController(
         sendGameEvent(
             action,
             gameState,
-            GameEvent.TRADE_PROPOSED,
-            "${fromPlayer.name} proposed a trade with ${toPlayer.name}."
+            if (existingOffer == null) GameEvent.TRADE_PROPOSED else GameEvent.TRADE_UPDATED,
+            if (existingOffer == null) {
+                "${fromPlayer.name} proposed a trade with ${toPlayer.name}."
+            } else {
+                "${gameState.players.find { it.id == action.playerId }?.name ?: "A player"} updated the trade."
+            }
         )
     }
 
@@ -820,8 +869,8 @@ class WebSocketBrokerController(
             sendGameError(action, gameState, "There is no pending trade to accept.")
             return
         }
-        if (action.playerId != offer.toPlayerId) {
-            sendGameError(action, gameState, "Only the invited player can accept this trade.")
+        if (action.playerId != offer.toPlayerId && action.playerId != offer.fromPlayerId) {
+            sendGameError(action, gameState, "Only involved players can accept this trade.")
             return
         }
         val requestedOfferId = action.payload["tradeId"]
@@ -830,6 +879,23 @@ class WebSocketBrokerController(
             return
         }
         if (!validateTradeOffer(offer, gameState, action)) return
+        if (!offer.hasTradeContents()) {
+            sendGameError(action, gameState, "Add money, properties, or jail cards before accepting the trade.")
+            return
+        }
+
+        val acceptedIds = (offer.acceptedByPlayerIds + action.playerId).distinct()
+        if (!acceptedIds.contains(offer.fromPlayerId) || !acceptedIds.contains(offer.toPlayerId)) {
+            gameState.pendingTradeOffer = offer.copy(acceptedByPlayerIds = acceptedIds)
+            val acceptingPlayer = gameState.players.find { it.id == action.playerId }
+            sendGameEvent(
+                action,
+                gameState,
+                GameEvent.TRADE_ACCEPTED,
+                "${acceptingPlayer?.name ?: "A player"} accepted the current trade offer."
+            )
+            return
+        }
 
         val fromPlayer = gameState.players.first { it.id == offer.fromPlayerId }
         val toPlayer = gameState.players.first { it.id == offer.toPlayerId }
@@ -853,8 +919,8 @@ class WebSocketBrokerController(
         sendGameEvent(
             action,
             gameState,
-            GameEvent.TRADE_ACCEPTED,
-            "${toPlayer.name} accepted ${fromPlayer.name}'s trade."
+            GameEvent.TRADE_COMPLETED,
+            "${fromPlayer.name} and ${toPlayer.name} completed a trade."
         )
     }
 
@@ -925,6 +991,15 @@ class WebSocketBrokerController(
         if (!validateTradeProperties(offer.requestPropertyIds, toPlayer.id, gameState, action)) return false
 
         return true
+    }
+
+    private fun TradeOffer.hasTradeContents(): Boolean {
+        return offerMoney > 0 ||
+            requestMoney > 0 ||
+            offerPropertyIds.isNotEmpty() ||
+            requestPropertyIds.isNotEmpty() ||
+            offerJailCards > 0 ||
+            requestJailCards > 0
     }
 
     private fun validateTradeProperties(
