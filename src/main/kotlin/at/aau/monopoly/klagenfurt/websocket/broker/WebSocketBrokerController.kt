@@ -1093,6 +1093,7 @@ class WebSocketBrokerController(
 
             gameState.endCurrentTurn()
             gameState.advanceTurn()
+            checkAndHandleGameOver(gameState)
 
             sendGameEvent(
                 action,
@@ -2039,13 +2040,25 @@ class WebSocketBrokerController(
         val player = gameState.players.find { it.id == action.playerId } ?: return
         val fieldId = action.payload["fieldId"]?.toIntOrNull() ?: return
         val field = gameState.fields.find { it.id == fieldId }
+        if (field == null) {
+            sendGameError(action, gameState, "Invalid fieldId.")
+            return
+        }
+        if (field !is OwnableField) {
+            sendGameError(action, gameState, "Only properties can be mortgaged.")
+            return
+        }
+        if (field.ownerId != player.id) {
+            sendGameError(action, gameState, "You can only mortgage your own properties.")
+            return
+        }
         val hasBuildings = field is PropertyField && (field.houses > 0 || field.hasHotel)
         val colorGroup = (field as? PropertyField)?.color
         val siblingHasBuildings = colorGroup != null && gameState.fields
             .filterIsInstance<PropertyField>()
             .any { it.color == colorGroup && it.id != field.id && it.ownerId == player.id && (it.houses > 0 || it.hasHotel) }
 
-        if (field is OwnableField && field.ownerId == player.id && !field.isMortgaged && !hasBuildings && !siblingHasBuildings) {
+        if (!field.isMortgaged && !hasBuildings && !siblingHasBuildings) {
             PaymentService.mortgageProperty(player, field)
             recomputeCanPayAfterAssets(gameState)
             messagingTemplate.convertAndSend(
@@ -2212,6 +2225,7 @@ class WebSocketBrokerController(
         gameState.bankruptcyOwnedFieldIds = ownedFieldIds
         gameState.bankruptcyPlayerId = player.id
 
+
         messagingTemplate.convertAndSend(
             "/topic/game/${action.gameId}",
             GameEvent(
@@ -2221,6 +2235,7 @@ class WebSocketBrokerController(
                 message = "${player.name} went bankrupt (debt: ${totalDebt}M, assets: ${totalAssetValue}M)."
             )
         )
+        checkAndHandleGameOver(gameState)
     }
 
     private fun validateCurrentPlayerTurn(
@@ -2337,5 +2352,24 @@ class WebSocketBrokerController(
                 "${reporter.name} falsely accused ${reported.name} of cheating, and pays them a 500M fine!"
             )
         }
+    }
+
+    private fun checkAndHandleGameOver(gameState: GameState) {
+        if (!gameState.isGameOver()) return
+
+        gameState.phase = GamePhase.FINISHED
+        gameState.pendingPayment = null
+        gameState.currentActionCard = null
+        gameState.lastDiceRoll = null
+
+        messagingTemplate.convertAndSend(
+            "/topic/game/${gameState.gameId}",
+            GameEvent(
+                gameId = gameState.gameId,
+                event = GameEvent.GAME_OVER,
+                gameState = gameState,
+                message = "Game over"
+            )
+        )
     }
 }

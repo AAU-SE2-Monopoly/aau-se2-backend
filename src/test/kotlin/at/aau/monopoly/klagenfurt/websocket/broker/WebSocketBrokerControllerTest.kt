@@ -33,296 +33,317 @@ class WebSocketBrokerControllerTest {
         val gameController = GameController()
         val controller = WebSocketBrokerController(messagingTemplate, gameController)
         return Triple(controller, gameController, messagingTemplate)
-        @Test
-        fun `REPORT_CHEATER penalizes confirmed cheater`() {
-            val (controller, gameController, messagingTemplate) = createController()
-            val gameState = gameController.createGame(hostPlayerId = "host-1")
-            gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm", money = 1000))
-            gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee", money = 1000))
-            gameState.advanceTurn()
-            gameState.phase = GamePhase.ROLLING
-
-            val cheater = gameState.players.find { it.id == "player-2" }!!
-            cheater.hasCheated = true
-
-            Mockito.clearInvocations(messagingTemplate)
-            controller.handleAction(
-                GameAction(
-                    gameId = gameState.gameId,
-                    playerId = "host-1",
-                    action = "REPORT_CHEATER",
-                    payload = mutableMapOf("reportedPlayerId" to "player-2")
-                )
-            )
-
-            val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-            assertEquals("CHEATER_REPORTED", event.event)
-            assertEquals(500, gameState.players.find { it.id == "host-1" }!!.money)
-            assertEquals(500, gameState.players.find { it.id == "player-2" }!!.money)
-            assertEquals(false, cheater.hasCheated)
-        }
-
-        @Test
-        fun `REPORT_CHEATER penalizes false accuser`() {
-            val (controller, gameController, messagingTemplate) = createController()
-            val gameState = gameController.createGame(hostPlayerId = "host-1")
-            gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm", money = 1000))
-            gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee", money = 1000))
-            gameState.advanceTurn()
-            gameState.phase = GamePhase.ROLLING
-
-            Mockito.clearInvocations(messagingTemplate)
-            controller.handleAction(
-                GameAction(
-                    gameId = gameState.gameId,
-                    playerId = "host-1",
-                    action = "REPORT_CHEATER",
-                    payload = mutableMapOf("reportedPlayerId" to "player-2")
-                )
-            )
-
-            val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-            assertEquals("CHEATER_REPORT_FAILED", event.event)
-            assertEquals(500, gameState.players.find { it.id == "host-1" }!!.money)
-            assertEquals(1500, gameState.players.find { it.id == "player-2" }!!.money)
-        }
-
-        @Test
-        fun `REPORT_CHEATER fails when reportedPlayerId missing`() {
-            val (controller, gameController, messagingTemplate) = createController()
-            val gameState = gameController.createGame(hostPlayerId = "host-1")
-            gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
-            gameState.advanceTurn()
-            gameState.phase = GamePhase.ROLLING
-
-            Mockito.clearInvocations(messagingTemplate)
-            controller.handleAction(
-                GameAction(
-                    gameId = gameState.gameId,
-                    playerId = "host-1",
-                    action = "REPORT_CHEATER",
-                    payload = mutableMapOf()
-                )
-            )
-
-            val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-            assertEquals("ERROR", event.event)
-            assertTrue(event.message!!.contains("reportedPlayerId"))
-        }
-
-        @Test
-        fun `REPORT_CHEATER fails when self-reporting`() {
-            val (controller, gameController, messagingTemplate) = createController()
-            val gameState = gameController.createGame(hostPlayerId = "host-1")
-            gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
-            gameState.advanceTurn()
-            gameState.phase = GamePhase.ROLLING
-
-            Mockito.clearInvocations(messagingTemplate)
-            controller.handleAction(
-                GameAction(
-                    gameId = gameState.gameId,
-                    playerId = "host-1",
-                    action = "REPORT_CHEATER",
-                    payload = mutableMapOf("reportedPlayerId" to "host-1")
-                )
-            )
-
-            val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-            assertEquals("ERROR", event.event)
-            assertTrue(event.message!!.contains("cannot report yourself"))
-        }
-
-        @Test
-        fun `forceEndTurn handles ROLLING phase by rolling dice`() {
-            val (controller, gameController, messagingTemplate) = createController()
-            val gameState = gameController.createGame(hostPlayerId = "host-1")
-            gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
-            gameState.advanceTurn()
-            gameState.phase = GamePhase.ROLLING
-
-            val result = controller.forceEndTurn(gameState.gameId)
-
-            assertTrue(result)
-            assertNotNull(gameState.lastDiceRoll)
-            assertEquals("TURN_TIMEOUT", (captureLastMessages(messagingTemplate, 1).single().second as GameEvent).event)
-        }
-
-        @Test
-        fun `forceEndTurn handles WAITING phase by returning false`() {
-            val (controller, gameController, _) = createController()
-            val gameState = gameController.createGame(hostPlayerId = "host-1")
-            gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
-            gameState.phase = GamePhase.WAITING
-
-            val result = controller.forceEndTurn(gameState.gameId)
-
-            assertFalse(result)
-        }
-
-        @Test
-        fun `forceEndTurn handles FINISHED phase by returning false`() {
-            val (controller, gameController, _) = createController()
-            val gameState = gameController.createGame(hostPlayerId = "host-1")
-            gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
-            gameState.advanceTurn()
-            gameState.phase = GamePhase.FINISHED
-
-            val result = controller.forceEndTurn(gameState.gameId)
-
-            assertFalse(result)
-        }
-
-        @Test
-        fun `DEBUG_FORWARD_GAME when debug mode disabled returns error`() {
-            val (controller, gameController, messagingTemplate) = createController()
-            val gameState = gameController.createGame(hostPlayerId = "host-1")
-            gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
-            gameState.advanceTurn()
-            gameState.phase = GamePhase.ROLLING
-
-            controller.setDebugMode(false)
-            controller.handleAction(
-                GameAction(
-                    gameId = gameState.gameId,
-                    playerId = "host-1",
-                    action = "DEBUG_FORWARD_GAME"
-                )
-            )
-
-            val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-            assertEquals("ERROR", event.event)
-            assertTrue(event.message!!.contains("Debug actions are disabled"))
-        }
-
-        @Test
-        fun `DEBUG_FORWARD_GAME when enabled sets up endgame state`() {
-            val (controller, gameController, messagingTemplate) = createController()
-            val gameState = gameController.createGame(hostPlayerId = "host-1")
-            gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm", money = 1500))
-            gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee", money = 1500))
-            gameState.advanceTurn()
-            gameState.phase = GamePhase.ROLLING
-
-            controller.setDebugMode(true)
-            controller.handleAction(
-                GameAction(
-                    gameId = gameState.gameId,
-                    playerId = "host-1",
-                    action = "DEBUG_FORWARD_GAME"
-                )
-            )
-
-            val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-            assertEquals("STATE_UPDATED", event.event)
-
-            val alice = gameState.players.first { it.id == "host-1" }
-            assertEquals(10_000, alice.money)
-            assertEquals(true, alice.ownedPropertyIds.isNotEmpty())
-            assertEquals(GamePhase.BUYING, gameState.phase)
-        }
-
-        @Test
-        fun `DEBUG_SETUP_BANKRUPTCY when debug mode disabled returns error`() {
-            val (controller, gameController, messagingTemplate) = createController()
-            val gameState = gameController.createGame(hostPlayerId = "host-1")
-            gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
-            gameState.advanceTurn()
-            gameState.phase = GamePhase.ROLLING
-
-            controller.setDebugMode(false)
-            controller.handleAction(
-                GameAction(
-                    gameId = gameState.gameId,
-                    playerId = "host-1",
-                    action = "DEBUG_SETUP_BANKRUPTCY"
-                )
-            )
-
-            val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-            assertEquals("ERROR", event.event)
-            assertTrue(event.message!!.contains("Debug actions are disabled"))
-        }
-
-        @Test
-        fun `DEBUG_SETUP_BANKRUPTCY when enabled sets up bankruptcy scenario`() {
-            val (controller, gameController, messagingTemplate) = createController()
-            val gameState = gameController.createGame(hostPlayerId = "host-1")
-            gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
-            gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
-            gameState.advanceTurn()
-            gameState.phase = GamePhase.ROLLING
-
-            controller.setDebugMode(true)
-            controller.handleAction(
-                GameAction(
-                    gameId = gameState.gameId,
-                    playerId = "host-1",
-                    action = "DEBUG_SETUP_BANKRUPTCY"
-                )
-            )
-
-            val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-            assertEquals("RENT_DUE", event.event)
-
-            val alice = gameState.players.first { it.id == "host-1" }
-            assertEquals(25, alice.money)
-            assertNotNull(gameState.pendingPayment)
-            assertEquals(GamePhase.PAYING_RENT, gameState.phase)
-        }
-
-        @Test
-        fun `MORTGAGE_PROPERTY when wrong player returns error`() {
-            val (controller, gameController, messagingTemplate) = createController()
-            val gameState = gameController.createGame(hostPlayerId = "host-1")
-            gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
-            gameState.advanceTurn()
-            gameState.phase = GamePhase.BUYING
-
-            Mockito.clearInvocations(messagingTemplate)
-            controller.handleAction(
-                GameAction(
-                    gameId = gameState.gameId,
-                    playerId = "host-1",
-                    action = "MORTGAGE_PROPERTY",
-                    payload = mutableMapOf("fieldId" to "99")
-                )
-            )
-
-            val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-            assertEquals("ERROR", event.event)
-            assertTrue(event.message!!.contains("Invalid fieldId") || event.message!!.contains("Only properties"))
-        }
-
-        @Test
-        fun `UNMORTGAGE_PROPERTY when insufficient funds returns error`() {
-            val (controller, gameController, messagingTemplate) = createController()
-            val gameState = gameController.createGame(hostPlayerId = "host-1")
-            gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm", money = 10))
-            gameState.advanceTurn()
-            gameState.phase = GamePhase.BUYING
-
-            val property = gameState.fields[1] as? PropertyField
-            property?.ownerId = "host-1"
-            property?.isMortgaged = true
-            gameState.players.first().ownedPropertyIds.add(1)
-
-            Mockito.clearInvocations(messagingTemplate)
-            controller.handleAction(
-                GameAction(
-                    gameId = gameState.gameId,
-                    playerId = "host-1",
-                    action = "UNMORTGAGE_PROPERTY",
-                    payload = mutableMapOf("fieldId" to "1")
-                )
-            )
-
-            val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-            assertEquals("ERROR", event.event)
-            assertTrue(event.message!!.contains("Not enough money"))
-        }
-
     }
+
+    @Test
+    fun `REPORT_CHEATER penalizes confirmed cheater`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(
+            gameState.gameId,
+            Player(id = "host-1", name = "Alice", iconId = "lindwurm", money = 1000)
+        )
+        gameController.joinGame(
+            gameState.gameId,
+            Player(id = "player-2", name = "Bob", iconId = "woerthersee", money = 1000)
+        )
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.ROLLING
+
+        val cheater = gameState.players.find { it.id == "player-2" }!!
+        cheater.hasCheated = true
+
+        Mockito.clearInvocations(messagingTemplate)
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "REPORT_CHEATER",
+                payload = mutableMapOf("reportedPlayerId" to "player-2")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("CHEATER_REPORTED", event.event)
+        assertEquals(1500, gameState.players.find { it.id == "host-1" }!!.money)
+        assertEquals(500, gameState.players.find { it.id == "player-2" }!!.money)
+        assertEquals(false, cheater.hasCheated)
+    }
+
+    @Test
+    fun `REPORT_CHEATER penalizes false accuser`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(
+            gameState.gameId,
+            Player(id = "host-1", name = "Alice", iconId = "lindwurm", money = 1000)
+        )
+        gameController.joinGame(
+            gameState.gameId,
+            Player(id = "player-2", name = "Bob", iconId = "woerthersee", money = 1000)
+        )
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.ROLLING
+
+        Mockito.clearInvocations(messagingTemplate)
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "REPORT_CHEATER",
+                payload = mutableMapOf("reportedPlayerId" to "player-2")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("CHEATER_REPORT_FAILED", event.event)
+        assertEquals(500, gameState.players.find { it.id == "host-1" }!!.money)
+        assertEquals(1500, gameState.players.find { it.id == "player-2" }!!.money)
+    }
+
+    @Test
+    fun `REPORT_CHEATER fails when reportedPlayerId missing`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.ROLLING
+
+        Mockito.clearInvocations(messagingTemplate)
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "REPORT_CHEATER",
+                payload = mutableMapOf()
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("reportedPlayerId"))
+    }
+
+    @Test
+    fun `REPORT_CHEATER fails when self-reporting`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.ROLLING
+
+        Mockito.clearInvocations(messagingTemplate)
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "REPORT_CHEATER",
+                payload = mutableMapOf("reportedPlayerId" to "host-1")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("cannot report yourself"))
+    }
+
+    @Test
+    fun `forceEndTurn handles ROLLING phase by rolling dice`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.ROLLING
+
+        val result = controller.forceEndTurn(gameState.gameId)
+
+        assertTrue(result)
+        assertEquals("TURN_TIMEOUT", (captureLastMessages(messagingTemplate, 1).single().second as GameEvent).event)
+    }
+
+    @Test
+    fun `forceEndTurn handles WAITING phase by returning false`() {
+        val (controller, gameController, _) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
+        gameState.phase = GamePhase.WAITING
+
+        val result = controller.forceEndTurn(gameState.gameId)
+
+        assertFalse(result)
+    }
+
+    @Test
+    fun `forceEndTurn handles FINISHED phase by returning false`() {
+        val (controller, gameController, _) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.FINISHED
+
+        val result = controller.forceEndTurn(gameState.gameId)
+
+        assertFalse(result)
+    }
+
+    @Test
+    fun `DEBUG_FORWARD_GAME when debug mode disabled returns error`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.ROLLING
+
+        controller.setDebugMode(false)
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DEBUG_FORWARD_GAME"
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("Debug actions are disabled"))
+    }
+
+    @Test
+    fun `DEBUG_FORWARD_GAME when enabled sets up endgame state`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(
+            gameState.gameId,
+            Player(id = "host-1", name = "Alice", iconId = "lindwurm", money = 1500)
+        )
+        gameController.joinGame(
+            gameState.gameId,
+            Player(id = "player-2", name = "Bob", iconId = "woerthersee", money = 1500)
+        )
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.ROLLING
+
+        controller.setDebugMode(true)
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DEBUG_FORWARD_GAME"
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("STATE_UPDATED", event.event)
+
+        val alice = gameState.players.first { it.id == "host-1" }
+        assertEquals(10_000, alice.money)
+        assertEquals(true, alice.ownedPropertyIds.isNotEmpty())
+        assertEquals(GamePhase.BUYING, gameState.phase)
+    }
+
+    @Test
+    fun `DEBUG_SETUP_BANKRUPTCY when debug mode disabled returns error`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.ROLLING
+
+        controller.setDebugMode(false)
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DEBUG_SETUP_BANKRUPTCY"
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("Debug actions are disabled"))
+    }
+
+    @Test
+    fun `DEBUG_SETUP_BANKRUPTCY when enabled sets up bankruptcy scenario`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.ROLLING
+
+        controller.setDebugMode(true)
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DEBUG_SETUP_BANKRUPTCY"
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("RENT_DUE", event.event)
+
+        val alice = gameState.players.first { it.id == "host-1" }
+        assertEquals(25, alice.money)
+        assertNotNull(gameState.pendingPayment)
+        assertEquals(GamePhase.PAYING_RENT, gameState.phase)
+    }
+
+    @Test
+    fun `MORTGAGE_PROPERTY when wrong player returns error`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.BUYING
+
+        Mockito.clearInvocations(messagingTemplate)
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "MORTGAGE_PROPERTY",
+                payload = mutableMapOf("fieldId" to "99")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("Invalid fieldId") || event.message!!.contains("Only properties"))
+    }
+
+    @Test
+    fun `UNMORTGAGE_PROPERTY when insufficient funds returns error`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(
+            gameState.gameId,
+            Player(id = "host-1", name = "Alice", iconId = "lindwurm", money = 10)
+        )
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.BUYING
+
+        val property = gameState.fields[1] as? PropertyField
+        property?.ownerId = "host-1"
+        property?.isMortgaged = true
+        gameState.players.first().ownedPropertyIds.add(1)
+
+        Mockito.clearInvocations(messagingTemplate)
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "UNMORTGAGE_PROPERTY",
+                payload = mutableMapOf("fieldId" to "1")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("Not enough money"))
+    }
+
 
     private fun captureMessages(
         messagingTemplate: SimpMessagingTemplate,
@@ -346,6 +367,7 @@ class WebSocketBrokerControllerTest {
         val allMessages = destinationCaptor.allValues.zip(payloadCaptor.allValues)
         return allMessages.takeLast(expectedCount)
     }
+
 
     @Test
     fun `createGame should broadcast created event to game topics and lobby`() {
@@ -739,13 +761,24 @@ class WebSocketBrokerControllerTest {
     fun `handleAction should broadcast last dice roll with both dice values`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.ROLLING
+        gameState.currentPlayer!!.position = 1
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
         gameState.advanceTurn()
 
         // Move player to a neutral position to avoid tax/rent landing events
         gameState.currentPlayer!!.position = 0 // Go
 
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "ROLL_DICE"))
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "ROLL_DICE",
+                payload = mutableMapOf("cheat" to "true")
+            )
+        )
 
         val payCaptor = ArgumentCaptor.forClass(Any::class.java)
         Mockito.verify(messagingTemplate, Mockito.atLeastOnce())
@@ -756,6 +789,16 @@ class WebSocketBrokerControllerTest {
         assertNotNull(diceEvent!!.gameState!!.lastDiceRoll)
         assertTrue(diceEvent.message!!.contains("rolled"))
         assertTrue(diceEvent.message!!.contains("="))
+
+        val event = payCaptor.allValues
+            .filterIsInstance<GameEvent>()
+            .first { it.event == "DICE_ROLLED" }
+
+        assertNotNull(event.gameState!!.lastDiceRoll)
+        assertEquals(6, event.gameState.lastDiceRoll!!.die1)
+        assertEquals(6, event.gameState.lastDiceRoll!!.die2)
+        assertTrue(event.message!!.contains("rolled"))
+        assertTrue(event.message.contains("="))
     }
 
     @Test
@@ -1125,8 +1168,11 @@ class WebSocketBrokerControllerTest {
             )
         )
 
-        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals("TURN_ENDED", event.event)
+        val events = captureLastMessages(messagingTemplate, 2)
+            .map { it.second as GameEvent }
+
+        assertTrue(events.any { it.event == "TURN_ENDED" })
+        assertTrue(events.any { it.event == GameEvent.GAME_OVER })
     }
 
     @Test
@@ -1146,8 +1192,11 @@ class WebSocketBrokerControllerTest {
             )
         )
 
-        val event = captureMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals("TURN_ENDED", event.event)
+        val events = captureLastMessages(messagingTemplate, 2)
+            .map { it.second as GameEvent }
+
+        assertTrue(events.any { it.event == "TURN_ENDED" })
+        assertTrue(events.any { it.event == GameEvent.GAME_OVER })
     }
 
     @Test
@@ -3246,13 +3295,16 @@ class WebSocketBrokerControllerTest {
             )
         )
 
-        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        val events = captureLastMessages(messagingTemplate, 2).map { it.second as GameEvent }
+        val event = events.first { it.event == GameEvent.BANKRUPTCY_DECLARED }
         assertEquals(GameEvent.BANKRUPTCY_DECLARED, event.event)
         assertNotNull(event.message)
         assertTrue(event.message!!.contains("Alice"))
         assertTrue(event.message!!.contains("bankrupt"))
         assertTrue(event.message!!.contains("debt"))
         assertTrue(event.message!!.contains("assets"))
+
+        assertTrue(events.any { it.event == GameEvent.BANKRUPTCY_DECLARED })
         assertEquals(0, gameState.players[0].money)
         assertTrue(gameState.players[0].eliminated)
         assertEquals("host-2", prop1.ownerId)
@@ -3696,8 +3748,11 @@ class WebSocketBrokerControllerTest {
 
         controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "DECLARE_BANKRUPTCY"))
 
-        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals(GameEvent.BANKRUPTCY_DECLARED, event.event)
+        val events = captureLastMessages(messagingTemplate, 2)
+            .map { it.second as GameEvent }
+
+        assertTrue(events.any { it.event == GameEvent.BANKRUPTCY_DECLARED })
+        assertTrue(events.any { it.event == GameEvent.GAME_OVER })
         assertEquals(0, gameState.players[0].money)
         assertNull(prop.ownerId)
     }
@@ -6052,9 +6107,87 @@ class WebSocketBrokerControllerTest {
         assertTrue(offer.requestPropertyIds.isEmpty())
         assertTrue(offer.acceptedByPlayerIds.isEmpty())
     }
+    @Test
+    fun `DECLARE_BANKRUPTCY with only one active player left should send GAME_OVER`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500, iconId = "lindwurm"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", money = 0, iconId = "gti"))
+
+        gameState.currentPlayerIndex = 1
+        val bankruptPlayerId = gameState.currentPlayer!!.id
+
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(
+            amount = 200,
+            source = PaymentSource.TAX,
+            sourceFieldId = 4,
+            creditorPlayerId = null,
+            debtorCanPayAfterAssets = false
+        )
+
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = bankruptPlayerId,
+                action = "DECLARE_BANKRUPTCY"
+            )
+        )
+
+        val events = captureLastMessages(messagingTemplate, 2)
+            .map { it.second as GameEvent }
+
+        assertTrue(gameState.players.first { it.id == bankruptPlayerId }.eliminated)
+        assertEquals(GamePhase.FINISHED, gameState.phase)
+        assertTrue(events.any { it.event == GameEvent.BANKRUPTCY_DECLARED })
+        assertTrue(events.any { it.event == GameEvent.GAME_OVER })
+    }
 
     @Test
-    fun `PROPOSE_TRADE rejects starting trade when it is not your turn`() {
+    fun `DECLARE_BANKRUPTCY with more than one active player left should not send GAME_OVER`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1500, iconId = "lindwurm"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", money = 0, iconId = "gti"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-3", name = "Charlie", money = 1500, iconId = "ironman"))
+
+        gameState.currentPlayerIndex = 1
+        val bankruptPlayerId = gameState.currentPlayer!!.id
+
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(
+            amount = 200,
+            source = PaymentSource.TAX,
+            sourceFieldId = 4,
+            creditorPlayerId = null,
+            debtorCanPayAfterAssets = false
+        )
+
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = bankruptPlayerId,
+                action = "DECLARE_BANKRUPTCY"
+            )
+        )
+
+        val events = captureLastMessages(messagingTemplate, 1)
+            .map { it.second as GameEvent }
+
+        assertTrue(gameState.players.first { it.id == bankruptPlayerId }.eliminated)
+        assertNotEquals(GamePhase.FINISHED, gameState.phase)
+        assertTrue(events.any { it.event == GameEvent.BANKRUPTCY_DECLARED })
+        assertTrue(events.none { it.event == GameEvent.GAME_OVER })
+    }
+
+    @Test
+    fun `PROPOSE_TRADE rejects starting trade when it is not your turn`(): Unit {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
