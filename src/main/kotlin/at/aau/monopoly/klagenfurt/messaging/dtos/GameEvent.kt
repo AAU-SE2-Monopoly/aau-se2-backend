@@ -29,5 +29,10 @@ data class GameEvent(
         const val BANKRUPTCY_DECLARED = "BANKRUPTCY_DECLARED"
         const val FREE_PARKING_COLLECTED = "FREE_PARKING_COLLECTED"
         const val GAME_OVER = "GAME_OVER"
+        const val TRADE_PROPOSED = "TRADE_PROPOSED"
+        const val TRADE_UPDATED = "TRADE_UPDATED"
+        const val TRADE_ACCEPTED = "TRADE_ACCEPTED"
+        const val TRADE_COMPLETED = "TRADE_COMPLETED"
+        const val TRADE_REJECTED = "TRADE_REJECTED"
     }
 }
