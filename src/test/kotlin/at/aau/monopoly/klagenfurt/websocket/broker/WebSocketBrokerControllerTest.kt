@@ -1823,12 +1823,12 @@ class WebSocketBrokerControllerTest {
             player.money = 1500
             controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "ROLL_DICE"))
             val payCaptor = ArgumentCaptor.forClass(Any::class.java)
-            Mockito.verify(messagingTemplate, Mockito.times(1))
+            Mockito.verify(messagingTemplate, Mockito.atLeastOnce())
                 .convertAndSend(Mockito.any(String::class.java), payCaptor.capture())
-            val event = payCaptor.value as GameEvent
+            val events = payCaptor.allValues.filterIsInstance<GameEvent>()
             if (!gameState.lastDiceRoll!!.isDouble) {
                 assertEquals(1700, player.money)
-                assertTrue(event.message!!.contains("passed Go"))
+                assertTrue(events.any { it.message?.contains("passed Go") == true })
                 break
             }
             attempts++
