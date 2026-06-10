@@ -8,6 +8,14 @@ services:
       # The app's working directory is /app (see Dockerfile), so the default
       # project-relative "data" folder resolves to /app/data inside the container.
       - monopoly-data:/app/data
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 2Gi
+        reservations:
+          cpus: "0.5"
+          memory: 1Gi
 
 volumes:
   monopoly-data:
