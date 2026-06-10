@@ -1782,7 +1782,12 @@ class WebSocketBrokerController(
             )
             messagingTemplate.convertAndSend(
                 "/topic/game/${action.gameId}",
-                GameEvent(gameId = action.gameId, event = GameEvent.RENT_DUE, gameState = gameState)
+                GameEvent(
+                    gameId = action.gameId,
+                    event = GameEvent.RENT_DUE,
+                    gameState = gameState,
+                    message = "${player.name} owes ${rent}M rent to ${owner.name} (${landedField.name})."
+                )
             )
         }
     }
@@ -1794,11 +1799,17 @@ class WebSocketBrokerController(
         landedField: Field
     ) {
         if (landedField is FreeParkingField && gameState.freeParkingMoney > 0) {
-            player.money += gameState.freeParkingMoney
+            val collectedAmount = gameState.freeParkingMoney
+            player.money += collectedAmount
             gameState.freeParkingMoney = 0
             messagingTemplate.convertAndSend(
                 "/topic/game/${action.gameId}",
-                GameEvent(gameId = action.gameId, event = GameEvent.FREE_PARKING_COLLECTED, gameState = gameState)
+                GameEvent(
+                    gameId = action.gameId,
+                    event = GameEvent.FREE_PARKING_COLLECTED,
+                    gameState = gameState,
+                    message = "${player.name} collected ${collectedAmount}M from Free Parking!"
+                )
             )
         }
     }
@@ -1955,7 +1966,7 @@ class WebSocketBrokerController(
         }
 
         // Process payment based on source
-         when (pending.source) {
+         val paymentResult = when (pending.source) {
              PaymentSource.RENT -> {
                  // Rent: money goes to the creditor player
                  val creditorId = pending.creditorPlayerId
@@ -1974,6 +1985,7 @@ class WebSocketBrokerController(
                  }
                  player.money -= pending.amount
                  creditor.money += pending.amount
+                 GameEvent.RENT_PAID to "${player.name} paid ${pending.amount}M to ${creditor.name}."
              }
              PaymentSource.TAX -> {
                  // Tax: money goes to Free Parking pot
@@ -1983,6 +1995,7 @@ class WebSocketBrokerController(
                  }
                  player.money -= pending.amount
                  gameState.freeParkingMoney += pending.amount
+                 GameEvent.TAX_PAID to "${player.name} paid ${pending.amount}M tax."
              }
              else -> {
                  sendGameError(action, gameState, "Unsupported payment source: ${pending.source}")
@@ -1998,11 +2011,9 @@ class WebSocketBrokerController(
              "/topic/game/${action.gameId}",
              GameEvent(
                  gameId = action.gameId,
-                 event = when (pending.source) {
-                     PaymentSource.TAX -> GameEvent.TAX_PAID
-                     else -> GameEvent.RENT_PAID
-                 },
-                 gameState = gameState
+                 event = paymentResult.first,
+                 gameState = gameState,
+                 message = paymentResult.second
              )
          )
     }
@@ -2039,7 +2050,12 @@ class WebSocketBrokerController(
             recomputeCanPayAfterAssets(gameState)
             messagingTemplate.convertAndSend(
                 "/topic/game/${action.gameId}",
-                GameEvent(gameId = action.gameId, event = GameEvent.PROPERTY_MORTGAGED, gameState = gameState)
+                GameEvent(
+                    gameId = action.gameId,
+                    event = GameEvent.PROPERTY_MORTGAGED,
+                    gameState = gameState,
+                    message = "${player.name} mortgaged ${field.name}."
+                )
             )
         } else if (hasBuildings) {
             sendGameError(action, gameState, "Sell all houses/hotels before mortgaging.")
@@ -2076,7 +2092,12 @@ class WebSocketBrokerController(
                 PaymentService.unmortgageProperty(player, field)
                 messagingTemplate.convertAndSend(
                     "/topic/game/${action.gameId}",
-                    GameEvent(gameId = action.gameId, event = GameEvent.PROPERTY_UNMORTGAGED, gameState = gameState)
+                    GameEvent(
+                        gameId = action.gameId,
+                        event = GameEvent.PROPERTY_UNMORTGAGED,
+                        gameState = gameState,
+                        message = "${player.name} unmortgaged ${field.name}."
+                    )
                 )
             } else {
                 sendGameError(action, gameState, "Not enough money to unmortgage. Need ${unmortgageCost}M.")
@@ -2193,7 +2214,12 @@ class WebSocketBrokerController(
 
         messagingTemplate.convertAndSend(
             "/topic/game/${action.gameId}",
-            GameEvent(gameId = action.gameId, event = GameEvent.BANKRUPTCY_DECLARED, gameState = gameState)
+            GameEvent(
+                gameId = action.gameId,
+                event = GameEvent.BANKRUPTCY_DECLARED,
+                gameState = gameState,
+                message = "${player.name} went bankrupt (debt: ${totalDebt}M, assets: ${totalAssetValue}M)."
+            )
         )
     }
 

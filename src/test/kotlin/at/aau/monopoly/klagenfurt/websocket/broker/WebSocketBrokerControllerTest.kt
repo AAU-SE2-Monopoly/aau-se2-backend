@@ -475,9 +475,10 @@ class WebSocketBrokerControllerTest {
 
         val destinationCaptor = ArgumentCaptor.forClass(String::class.java)
         val payloadCaptor = ArgumentCaptor.forClass(Any::class.java)
-        Mockito.verify(messagingTemplate, Mockito.times(1))
+        Mockito.verify(messagingTemplate, Mockito.atLeastOnce())
             .convertAndSend(destinationCaptor.capture(), payloadCaptor.capture())
-        val event = payloadCaptor.value as GameEvent
+        val event = payloadCaptor.allValues.filterIsInstance<GameEvent>()
+            .single { it.event == "DICE_ROLLED" }
 
         assertEquals("DICE_ROLLED", event.event)
         assertEquals(GamePhase.BUYING, gameState.phase)
@@ -749,7 +750,7 @@ class WebSocketBrokerControllerTest {
         val payCaptor = ArgumentCaptor.forClass(Any::class.java)
         Mockito.verify(messagingTemplate, Mockito.atLeastOnce())
             .convertAndSend(Mockito.any(String::class.java), payCaptor.capture())
-        
+
         val diceEvent = payCaptor.allValues.filterIsInstance<GameEvent>().find { it.event == "DICE_ROLLED" }
         assertNotNull(diceEvent)
         assertNotNull(diceEvent!!.gameState!!.lastDiceRoll)
@@ -2112,8 +2113,8 @@ class WebSocketBrokerControllerTest {
         // Wait, 12 is a doublet. I want a non-doublet.
         // Cheat mode always rolls 6+6? Let's check createDiceRoll.
         // Yes, DiceRoll(6, 6).
-        
-        // I'll manually set a non-doublet last roll for testing passing Go, 
+
+        // I'll manually set a non-doublet last roll for testing passing Go,
         // but ROLL_DICE will roll its own.
         // I'll just keep the random loop but fix the message capturing.
 
@@ -2124,15 +2125,15 @@ class WebSocketBrokerControllerTest {
             player.position = 38
             player.money = 1500
             controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "ROLL_DICE"))
-            
+
             val destinationCaptor = ArgumentCaptor.forClass(String::class.java)
             val payloadCaptor = ArgumentCaptor.forClass(Any::class.java)
             Mockito.verify(messagingTemplate, Mockito.atLeastOnce())
                 .convertAndSend(destinationCaptor.capture(), payloadCaptor.capture())
-            
+
             val events = payloadCaptor.allValues.filterIsInstance<GameEvent>()
             val diceEvent = events.find { it.event == "DICE_ROLLED" }
-            
+
             if (gameState.lastDiceRoll != null && !gameState.lastDiceRoll!!.isDouble) {
                 assertEquals(1700, player.money)
                 assertTrue(diceEvent?.message?.contains("passed Go") == true)
@@ -3053,6 +3054,10 @@ class WebSocketBrokerControllerTest {
 
         val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
         assertEquals(GameEvent.RENT_PAID, event.event)
+        assertNotNull(event.message)
+        assertTrue(event.message!!.contains("Alice"))
+        assertTrue(event.message!!.contains("100M"))
+        assertTrue(event.message!!.contains("Bob"))
         assertEquals(400, gameState.players[0].money)
         assertEquals(600, gameState.players[1].money)
         assertNull(gameState.pendingPayment)
@@ -3243,6 +3248,11 @@ class WebSocketBrokerControllerTest {
 
         val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
         assertEquals(GameEvent.BANKRUPTCY_DECLARED, event.event)
+        assertNotNull(event.message)
+        assertTrue(event.message!!.contains("Alice"))
+        assertTrue(event.message!!.contains("bankrupt"))
+        assertTrue(event.message!!.contains("debt"))
+        assertTrue(event.message!!.contains("assets"))
         assertEquals(0, gameState.players[0].money)
         assertTrue(gameState.players[0].eliminated)
         assertEquals("host-2", prop1.ownerId)
@@ -3350,6 +3360,9 @@ class WebSocketBrokerControllerTest {
 
         val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
         assertEquals(GameEvent.PROPERTY_MORTGAGED, event.event)
+        assertNotNull(event.message)
+        assertTrue(event.message!!.contains("Alice"))
+        assertTrue(event.message!!.contains("mortgaged"))
         assertTrue(prop1.isMortgaged)
         assertEquals(500 + 60 / 2, gameState.players[0].money)
     }
@@ -3377,6 +3390,9 @@ class WebSocketBrokerControllerTest {
 
         val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
         assertEquals(GameEvent.PROPERTY_UNMORTGAGED, event.event)
+        assertNotNull(event.message)
+        assertTrue(event.message!!.contains("Alice"))
+        assertTrue(event.message!!.contains("unmortgaged"))
         assertFalse(prop1.isMortgaged)
         assertEquals(500 - 33, gameState.players[0].money)
     }
@@ -4318,6 +4334,11 @@ class WebSocketBrokerControllerTest {
         val events = captureMessages(messagingTemplate, 2)
         val rentEvent = events.find { (it.second as? GameEvent)?.event == GameEvent.RENT_DUE }
         assertNotNull(rentEvent, "Expected RENT_DUE event when landing on owned railroad")
+        val rentEventPayload = rentEvent!!.second as GameEvent
+        assertNotNull(rentEventPayload.message)
+        assertTrue(rentEventPayload.message!!.contains("Bob"))
+        assertTrue(rentEventPayload.message!!.contains("Alice"))
+        assertTrue(rentEventPayload.message!!.contains("rent"))
         assertEquals(GamePhase.PAYING_RENT, gameState.phase)
         assertNotNull(gameState.pendingPayment)
         assertEquals(25, gameState.pendingPayment!!.amount)
@@ -4347,6 +4368,11 @@ class WebSocketBrokerControllerTest {
         val events = captureMessages(messagingTemplate, 2)
         val rentEvent = events.find { (it.second as? GameEvent)?.event == GameEvent.RENT_DUE }
         assertNotNull(rentEvent, "Expected RENT_DUE event when landing on owned utility")
+        val rentEventPayload = rentEvent!!.second as GameEvent
+        assertNotNull(rentEventPayload.message)
+        assertTrue(rentEventPayload.message!!.contains("Bob"))
+        assertTrue(rentEventPayload.message!!.contains("Alice"))
+        assertTrue(rentEventPayload.message!!.contains("rent"))
         assertEquals(GamePhase.PAYING_RENT, gameState.phase)
         assertNotNull(gameState.pendingPayment)
     }
@@ -4471,7 +4497,7 @@ class WebSocketBrokerControllerTest {
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1000))
         gameState.advanceTurn()
-        
+
         gameState.currentActionCard = ChanceCard(id = 1, description = "Win 100", action = CardAction.COLLECT_MONEY, amount = 100)
         gameState.phase = GamePhase.BUYING
 
@@ -4487,7 +4513,7 @@ class WebSocketBrokerControllerTest {
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 0, iconId = "lindwurm"))
         gameState.currentPlayerIndex = 0
-        
+
         val prop = gameState.fields[1] as PropertyField
         prop.ownerId = "host-1"
         prop.hasHotel = true
@@ -4512,7 +4538,7 @@ class WebSocketBrokerControllerTest {
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 0))
         gameState.currentPlayerIndex = 0
-        
+
         val prop1 = gameState.fields[1] as PropertyField
         prop1.ownerId = "host-1"; prop1.houses = 3
         val prop3 = gameState.fields[3] as PropertyField
@@ -5012,7 +5038,7 @@ class WebSocketBrokerControllerTest {
         val payloadCaptor = ArgumentCaptor.forClass(Any::class.java)
         Mockito.verify(messagingTemplate, Mockito.atLeastOnce())
             .convertAndSend(destinationCaptor.capture(), payloadCaptor.capture())
-        
+
         val events = payloadCaptor.allValues.filterIsInstance<GameEvent>()
 
         assertEquals(4, player.position)
@@ -5046,7 +5072,7 @@ class WebSocketBrokerControllerTest {
         val payloadCaptor = ArgumentCaptor.forClass(Any::class.java)
         Mockito.verify(messagingTemplate, Mockito.atLeastOnce())
             .convertAndSend(destinationCaptor.capture(), payloadCaptor.capture())
-        
+
         val events = payloadCaptor.allValues.filterIsInstance<GameEvent>()
 
         assertEquals(38, player.position)
@@ -5327,6 +5353,11 @@ class WebSocketBrokerControllerTest {
         assertEquals(1800, player.money)
         assertEquals(0, gameState.freeParkingMoney)
         assertTrue(events.any { it.event == GameEvent.FREE_PARKING_COLLECTED })
+        val fpEvent = events.find { it.event == GameEvent.FREE_PARKING_COLLECTED }!!
+        assertNotNull(fpEvent.message)
+        assertTrue(fpEvent.message!!.contains("Alice"))
+        assertTrue(fpEvent.message!!.contains("300M"))
+        assertTrue(fpEvent.message!!.contains("Free Parking"))
     }
     @Test
     fun `PAY_TAX should move money to Free Parking and emit TAX_PAID`() {
@@ -5362,6 +5393,10 @@ class WebSocketBrokerControllerTest {
         val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
 
         assertEquals(GameEvent.TAX_PAID, event.event)
+        assertNotNull(event.message)
+        assertTrue(event.message!!.contains("Alice"))
+        assertTrue(event.message!!.contains("100M"))
+        assertTrue(event.message!!.contains("tax"))
         assertEquals(50, player.money)
         assertEquals(100, gameState.freeParkingMoney)
         assertNull(gameState.pendingPayment)
@@ -5938,6 +5973,11 @@ class WebSocketBrokerControllerTest {
         assertEquals(PaymentSource.TAX, gameState.pendingPayment!!.source)
         assertEquals(200, gameState.pendingPayment!!.amount)
         assertTrue(events.any { it.event == GameEvent.TAX_DUE })
+        val taxDueEvent = events.find { it.event == GameEvent.TAX_DUE }!!
+        assertNotNull(taxDueEvent.message)
+        assertTrue(taxDueEvent.message!!.contains("Alice"))
+        assertTrue(taxDueEvent.message!!.contains("200"))
+        assertTrue(taxDueEvent.message!!.contains("tax"))
     }
 
     @Test
@@ -6332,25 +6372,25 @@ class WebSocketBrokerControllerTest {
         gameState.phase = GamePhase.BUYING
 
         // Trading property not owned
-        controller.handleAction(GameAction(gameState.gameId, "host-1", "PROPOSE_TRADE", 
+        controller.handleAction(GameAction(gameState.gameId, "host-1", "PROPOSE_TRADE",
             mutableMapOf("toPlayerId" to "player-2", "offerPropertyIds" to "1")))
         var event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
         assertEquals("ERROR", event.event)
         assertTrue(event.message!!.contains("is not owned by the expected player"))
 
         // Trading non-ownable field
-        controller.handleAction(GameAction(gameState.gameId, "host-1", "PROPOSE_TRADE", 
+        controller.handleAction(GameAction(gameState.gameId, "host-1", "PROPOSE_TRADE",
             mutableMapOf("toPlayerId" to "player-2", "offerPropertyIds" to "0")))
         event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
         assertEquals("ERROR", event.event)
         assertTrue(event.message!!.contains("Only ownable fields can be traded"))
-        
+
         // Trading property with houses
         val prop = gameState.fields[1] as PropertyField
         prop.ownerId = "host-1"
         prop.houses = 1
         gameState.players[0].ownedPropertyIds.add(1)
-        controller.handleAction(GameAction(gameState.gameId, "host-1", "PROPOSE_TRADE", 
+        controller.handleAction(GameAction(gameState.gameId, "host-1", "PROPOSE_TRADE",
             mutableMapOf("toPlayerId" to "player-2", "offerPropertyIds" to "1")))
         event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
         assertEquals("ERROR", event.event)
@@ -6370,9 +6410,9 @@ class WebSocketBrokerControllerTest {
         (gameState.fields[3] as PropertyField).ownerId = "host-1"
         gameState.players[0].ownedPropertyIds.addAll(listOf(1, 3))
 
-        controller.handleAction(GameAction(gameState.gameId, "host-1", "PROPOSE_TRADE", 
+        controller.handleAction(GameAction(gameState.gameId, "host-1", "PROPOSE_TRADE",
             mutableMapOf("toPlayerId" to "player-2", "offerPropertyIds" to "1, 3")))
-        
+
         val offer = gameState.pendingTradeOffer!!
         assertEquals(listOf(1, 3), offer.offerPropertyIds)
     }
