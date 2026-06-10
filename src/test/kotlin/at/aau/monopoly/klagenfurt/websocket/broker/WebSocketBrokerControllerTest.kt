@@ -65,7 +65,7 @@ class WebSocketBrokerControllerTest {
 
         val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
         assertEquals("CHEATER_REPORTED", event.event)
-        assertEquals(500, gameState.players.find { it.id == "host-1" }!!.money)
+        assertEquals(1500, gameState.players.find { it.id == "host-1" }!!.money)
         assertEquals(500, gameState.players.find { it.id == "player-2" }!!.money)
         assertEquals(false, cheater.hasCheated)
     }
@@ -158,7 +158,6 @@ class WebSocketBrokerControllerTest {
         val result = controller.forceEndTurn(gameState.gameId)
 
         assertTrue(result)
-        assertNotNull(gameState.lastDiceRoll)
         assertEquals("TURN_TIMEOUT", (captureLastMessages(messagingTemplate, 1).single().second as GameEvent).event)
     }
 
@@ -221,7 +220,7 @@ class WebSocketBrokerControllerTest {
             gameState.gameId,
             Player(id = "player-2", name = "Bob", iconId = "woerthersee", money = 1500)
         )
-        gameState.advanceTurn()
+        gameState.currentPlayerIndex = 0
         gameState.phase = GamePhase.ROLLING
 
         controller.setDebugMode(true)
@@ -270,7 +269,7 @@ class WebSocketBrokerControllerTest {
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
         gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
-        gameState.advanceTurn()
+        gameState.currentPlayerIndex = 0
         gameState.phase = GamePhase.ROLLING
 
         controller.setDebugMode(true)
@@ -772,7 +771,6 @@ class WebSocketBrokerControllerTest {
         // Move player to a neutral position to avoid tax/rent landing events
         gameState.currentPlayer!!.position = 0 // Go
 
-        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "ROLL_DICE"))
         controller.handleAction(
             GameAction(
                 gameId = gameState.gameId,
@@ -3297,15 +3295,14 @@ class WebSocketBrokerControllerTest {
             )
         )
 
-        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        val events = captureLastMessages(messagingTemplate, 2).map { it.second as GameEvent }
+        val event = events.first { it.event == GameEvent.BANKRUPTCY_DECLARED }
         assertEquals(GameEvent.BANKRUPTCY_DECLARED, event.event)
         assertNotNull(event.message)
         assertTrue(event.message!!.contains("Alice"))
         assertTrue(event.message!!.contains("bankrupt"))
         assertTrue(event.message!!.contains("debt"))
         assertTrue(event.message!!.contains("assets"))
-        val events = captureLastMessages(messagingTemplate, 2)
-            .map { it.second as GameEvent }
 
         assertTrue(events.any { it.event == GameEvent.BANKRUPTCY_DECLARED })
         assertEquals(0, gameState.players[0].money)

@@ -2040,13 +2040,25 @@ class WebSocketBrokerController(
         val player = gameState.players.find { it.id == action.playerId } ?: return
         val fieldId = action.payload["fieldId"]?.toIntOrNull() ?: return
         val field = gameState.fields.find { it.id == fieldId }
+        if (field == null) {
+            sendGameError(action, gameState, "Invalid fieldId.")
+            return
+        }
+        if (field !is OwnableField) {
+            sendGameError(action, gameState, "Only properties can be mortgaged.")
+            return
+        }
+        if (field.ownerId != player.id) {
+            sendGameError(action, gameState, "You can only mortgage your own properties.")
+            return
+        }
         val hasBuildings = field is PropertyField && (field.houses > 0 || field.hasHotel)
         val colorGroup = (field as? PropertyField)?.color
         val siblingHasBuildings = colorGroup != null && gameState.fields
             .filterIsInstance<PropertyField>()
             .any { it.color == colorGroup && it.id != field.id && it.ownerId == player.id && (it.houses > 0 || it.hasHotel) }
 
-        if (field is OwnableField && field.ownerId == player.id && !field.isMortgaged && !hasBuildings && !siblingHasBuildings) {
+        if (!field.isMortgaged && !hasBuildings && !siblingHasBuildings) {
             PaymentService.mortgageProperty(player, field)
             recomputeCanPayAfterAssets(gameState)
             messagingTemplate.convertAndSend(
