@@ -56,7 +56,11 @@ class WebSocketBrokerIntegrationTest {
         queue: BlockingQueue<T>,
         expectedType: Class<T>
     ): StompSession {
-        val stompClient = WebSocketStompClient(StandardWebSocketClient())
+        val container = jakarta.websocket.ContainerProvider.getWebSocketContainer()
+        container.defaultMaxTextMessageBufferSize = 1024 * 1024
+        
+        val stompClient = WebSocketStompClient(StandardWebSocketClient(container))
+        stompClient.inboundMessageSizeLimit = 1024 * 1024
         stompClient.messageConverter = messageConverter
         val session = stompClient.connectAsync(websocketUri, object : StompSessionHandlerAdapter() {})
             .get(1, TimeUnit.SECONDS)
@@ -279,6 +283,56 @@ class WebSocketBrokerIntegrationTest {
         val event = events.poll(2, TimeUnit.SECONDS)
         assertThat(event).isNotNull
         assertThat(event!!.event).isEqualTo("ERROR")
+
+        session.disconnect()
+    }
+
+    // ─── Game: report cheater ────────────────────────────────────────────────
+
+    @Test
+    fun `report cheater successfully`() {
+        val gameState = gameController.createGame("host-1")
+        val gameId = gameState.gameId
+        gameController.joinGame(gameId, Player(id = "host-1", name = "Alice"))
+        gameController.joinGame(gameId, Player(id = "player-1", name = "Bob", iconId = "woerthersee"))
+
+        val events: BlockingQueue<GameEvent> = LinkedBlockingDeque()
+        val session = initStompSession(
+            "/topic/game/$gameId",
+            JacksonJsonMessageConverter(),
+            events,
+            GameEvent::class.java
+        )
+
+        // STOMP over localhost can sometimes take a moment to establish subscriptions.
+        // Wait 1.5 seconds to guarantee the broker has processed the SUBSCRIBE frame.
+        Thread.sleep(1500)
+
+        // Make Bob a cheater
+        val bob = gameState.players.find { it.id == "player-1" }!!
+        bob.hasCheated = true
+        
+        // Tomcat's default WebSocket max buffer size is 8192 bytes.
+        // The GameState with 40 fields + cards + long message exceeds 8KB and gets dropped.
+        // Clear the cards and fields using reflection to ensure the JSON payload stays well under the 8KB limit.
+        gameState.chanceCards.clear()
+        gameState.communityChestCards.clear()
+        val fieldsField = at.aau.monopoly.klagenfurt.model.GameState::class.java.getDeclaredField("fields")
+        fieldsField.isAccessible = true
+        fieldsField.set(gameState, emptyList<at.aau.monopoly.klagenfurt.model.field.Field>())
+
+        val action = GameAction(
+            gameId = gameId,
+            playerId = "host-1",
+            action = "REPORT_CHEATER",
+            payload = mutableMapOf("reportedPlayerId" to "player-1")
+        )
+        session.send("/app/game/action", action)
+
+        val event = events.poll(5, TimeUnit.SECONDS)
+        assertThat(event).isNotNull
+        assertThat(event!!.event).isEqualTo("CHEATER_REPORTED")
+        assertThat(event.message).contains("successfully reported Bob")
 
         session.disconnect()
     }

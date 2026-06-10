@@ -40,6 +40,10 @@ class TurnTimeoutService(
             if (gameState.phase == GamePhase.WAITING || gameState.phase == GamePhase.FINISHED) {
                 return@forEach
             }
+            if (gameState.pendingTradeOffer != null) {
+                gameState.resetTurnTimer(now)
+                return@forEach
+            }
             val startedAt = gameState.turnTimerStartedAtMillis
             if (startedAt <= 0) return@forEach
             if (now - startedAt < timeoutMillis) return@forEach
@@ -59,4 +63,3 @@ class TurnTimeoutService(
         private val logger = LoggerFactory.getLogger(TurnTimeoutService::class.java)
     }
 }
-

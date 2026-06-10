@@ -6,7 +6,7 @@ import at.aau.monopoly.klagenfurt.model.card.CommunityChestCard
 import at.aau.monopoly.klagenfurt.model.enums.GamePhase
 import at.aau.monopoly.klagenfurt.model.field.Field
 
-enum class PaymentSource { RENT, CARD_PAY, CARD_PAY_EACH, CARD_REPAIR }
+enum class PaymentSource { RENT, CARD_PAY, CARD_PAY_EACH, CARD_REPAIR, TAX }
 
 data class PendingPayment(
     val amount: Int,
@@ -14,6 +14,19 @@ data class PendingPayment(
     val sourceFieldId: Int? = null,
     val creditorPlayerId: String? = null,
     val debtorCanPayAfterAssets: Boolean = false
+)
+
+data class TradeOffer(
+    val id: String,
+    val fromPlayerId: String,
+    val toPlayerId: String,
+    val offerMoney: Int = 0,
+    val requestMoney: Int = 0,
+    val offerPropertyIds: List<Int> = emptyList(),
+    val requestPropertyIds: List<Int> = emptyList(),
+    val offerJailCards: Int = 0,
+    val requestJailCards: Int = 0,
+    val acceptedByPlayerIds: List<String> = emptyList()
 )
 
 data class GameState(
@@ -34,6 +47,7 @@ data class GameState(
     var bankruptcyPropertiesCount: Int = 0,
     var bankruptcyOwnedFieldIds: List<Int> = emptyList(),
     var bankruptcyPlayerId: String = "",
+    var pendingTradeOffer: TradeOffer? = null,
     var hasDrawnCardThisTurn: Boolean = false,
     /**
      * Epoch-millis timestamp marking when the current player's turn-timeout clock started.
@@ -68,6 +82,7 @@ data class GameState(
         phase = GamePhase.ROLLING
         currentActionCard = null
         pendingPayment = null
+        pendingTradeOffer = null
         hasDrawnCardThisTurn = false
         resetTurnTimer()
     }

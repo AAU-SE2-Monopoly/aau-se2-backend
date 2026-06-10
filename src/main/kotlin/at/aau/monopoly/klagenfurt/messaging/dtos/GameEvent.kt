@@ -19,6 +19,8 @@ data class GameEvent(
     companion object {
         const val RENT_DUE = "RENT_DUE"
         const val RENT_PAID = "RENT_PAID"
+        const val TAX_DUE = "TAX_DUE"
+        const val TAX_PAID = "TAX_PAID"
 
         const val PROPERTY_MORTGAGED = "PROPERTY_MORTGAGED"
         const val PROPERTY_UNMORTGAGED = "PROPERTY_UNMORTGAGED"
@@ -26,6 +28,10 @@ data class GameEvent(
         const val HOUSE_SOLD = "HOUSE_SOLD"
         const val BANKRUPTCY_DECLARED = "BANKRUPTCY_DECLARED"
         const val FREE_PARKING_COLLECTED = "FREE_PARKING_COLLECTED"
+        const val TRADE_PROPOSED = "TRADE_PROPOSED"
+        const val TRADE_UPDATED = "TRADE_UPDATED"
+        const val TRADE_ACCEPTED = "TRADE_ACCEPTED"
+        const val TRADE_COMPLETED = "TRADE_COMPLETED"
+        const val TRADE_REJECTED = "TRADE_REJECTED"
     }
 }
-
