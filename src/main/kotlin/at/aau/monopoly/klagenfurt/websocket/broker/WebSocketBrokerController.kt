@@ -1651,7 +1651,7 @@ class WebSocketBrokerController(
         }
 
         // Process payment based on source
-         when (pending.source) {
+         val paymentResult = when (pending.source) {
              PaymentSource.RENT -> {
                  // Rent: money goes to the creditor player
                  val creditorId = pending.creditorPlayerId
@@ -1670,6 +1670,7 @@ class WebSocketBrokerController(
                  }
                  player.money -= pending.amount
                  creditor.money += pending.amount
+                 GameEvent.RENT_PAID to "${player.name} paid ${pending.amount}M to ${creditor.name}."
              }
              PaymentSource.TAX -> {
                  // Tax: money goes to Free Parking pot
@@ -1679,6 +1680,7 @@ class WebSocketBrokerController(
                  }
                  player.money -= pending.amount
                  gameState.freeParkingMoney += pending.amount
+                 GameEvent.TAX_PAID to "${player.name} paid ${pending.amount}M tax."
              }
              else -> {
                  sendGameError(action, gameState, "Unsupported payment source: ${pending.source}")
@@ -1694,19 +1696,9 @@ class WebSocketBrokerController(
              "/topic/game/${action.gameId}",
              GameEvent(
                  gameId = action.gameId,
-                 event = when (pending.source) {
-                     PaymentSource.TAX -> GameEvent.TAX_PAID
-                     else -> GameEvent.RENT_PAID
-                 },
+                 event = paymentResult.first,
                  gameState = gameState,
-                 message = when (pending.source) {
-                     PaymentSource.TAX -> "${player.name} paid ${pending.amount}M tax."
-                     PaymentSource.RENT -> {
-                         val creditorName = gameState.players.find { it.id == pending.creditorPlayerId }?.name ?: "the bank"
-                         "${player.name} paid ${pending.amount}M to ${creditorName}."
-                     }
-                     else -> "${player.name} paid ${pending.amount}M."
-                 }
+                 message = paymentResult.second
              )
          )
     }
