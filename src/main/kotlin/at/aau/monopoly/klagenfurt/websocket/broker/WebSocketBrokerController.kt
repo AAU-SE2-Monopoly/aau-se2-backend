@@ -15,6 +15,7 @@ import at.aau.monopoly.klagenfurt.model.field.ChanceField
 import at.aau.monopoly.klagenfurt.model.field.CommunityChestField
 import at.aau.monopoly.klagenfurt.model.field.Field
 import at.aau.monopoly.klagenfurt.model.field.FreeParkingField
+import at.aau.monopoly.klagenfurt.model.field.GoToJailField
 import at.aau.monopoly.klagenfurt.model.field.OwnableField
 import at.aau.monopoly.klagenfurt.model.field.PropertyField
 import at.aau.monopoly.klagenfurt.model.field.RailroadField
@@ -402,7 +403,7 @@ class WebSocketBrokerController(
                         else -> card.targetFieldId!!
                     }
                     player.position = target
-                    if (target < oldPosition) player.money += 200
+                    if (target < oldPosition && target != 30) player.money += 200
                 }
             }
             CardAction.MOVE_FORWARD -> {
@@ -414,6 +415,8 @@ class WebSocketBrokerController(
                 player.position = 10
                 player.inJail = true
                 player.jailTurns = 0
+                player.consecutiveDoublets = 0
+                gameState.phase = GamePhase.TURN_END
             }
             CardAction.GET_OUT_OF_JAIL -> player.getOutOfJailCards += 1
             CardAction.PAY_PER_BUILDING -> {
@@ -453,12 +456,21 @@ class WebSocketBrokerController(
         }
     }
 
+    private fun isPendingPaymentDebtor(
+        gameState: GameState,
+        playerId: String
+    ): Boolean {
+        val pending = gameState.pendingPayment ?: return false
+        return pending.debtorPlayerId?.let { it == playerId }
+            ?: (gameState.phase == GamePhase.PAYING_RENT && gameState.currentPlayer?.id == playerId)
+    }
+
     private fun handleBuyHouse(
         action: GameAction,
         gameState: GameState
     ) {
-        if (gameState.phase == GamePhase.PAYING_RENT) {
-            sendGameError(action, gameState, "Cannot buy houses while rent is due.")
+        if (isPendingPaymentDebtor(gameState, action.playerId)) {
+            sendGameError(action, gameState, "You cannot buy houses while you have a pending payment.")
             return
         }
 
@@ -515,8 +527,8 @@ class WebSocketBrokerController(
         action: GameAction,
         gameState: GameState
     ) {
-        if (gameState.phase == GamePhase.PAYING_RENT) {
-            sendGameError(action, gameState, "Cannot buy hotels while rent is due.")
+        if (isPendingPaymentDebtor(gameState, action.playerId)) {
+            sendGameError(action, gameState, "You cannot buy hotels while you have a pending payment.")
             return
         }
 
@@ -1286,13 +1298,15 @@ class WebSocketBrokerController(
                 return
             }
         executeCardAction(gameState, card, action.playerId)
-        if (card.action == CardAction.MOVE_TO || card.action == CardAction.MOVE_FORWARD) {
-            resolveLandingEffects(action, gameState, player)
+        val movementPerformed = card.action == CardAction.MOVE_TO || card.action == CardAction.MOVE_FORWARD
+
+        if (movementPerformed) {
             val currentField = gameState.fields.getOrNull(player.position)
             if (currentField is ChanceField || currentField is CommunityChestField) {
                 gameState.hasDrawnCardThisTurn = false
             }
         }
+
         gameState.currentActionCard = null
         sendGameEvent(
             action,
@@ -1300,6 +1314,10 @@ class WebSocketBrokerController(
             "ACTION_EXECUTED",
             "Action executed: ${card.description}"
         )
+
+        if (movementPerformed) {
+            resolveLandingEffects(action, gameState, player)
+        }
     }
 
     private fun handleDrawCard(
@@ -1471,7 +1489,7 @@ class WebSocketBrokerController(
                 player.consecutiveDoublets = 0
                 player.inJail = false
                 player.jailTurns = 0
-                eventMessage += " Failed 3rd attempt. Paid 50M to get out!"
+                eventMessage += " Failed 3rd attempt. Paid 50\u20ac to get out!"
 
                 movePlayerAfterRoll(gameState, player, roll.total)
                 gameState.phase = GamePhase.BUYING
@@ -1537,7 +1555,7 @@ class WebSocketBrokerController(
 
          if (newPos < oldPos) {
              player.money += 200
-             eventMessage += " and passed Go (+200€)."
+             eventMessage += " and passed Go (+200\u20ac)."
          }
 
          player.position = newPos
@@ -1613,7 +1631,7 @@ class WebSocketBrokerController(
             sendGameError(
                 action,
                 gameState,
-                "You don't have enough money to buy ${field.name}. Price: $$price, Your Money: $${player.money}"
+                "You don't have enough money to buy ${field.name}. Price: ${price}\u20ac, Your Money: ${player.money}\u20ac"
             )
             return
         }
@@ -1632,7 +1650,7 @@ class WebSocketBrokerController(
             action,
             gameState,
             "PROPERTY_BOUGHT",
-            "${player.name} bought ${field.name} for $$price."
+            "${player.name} bought ${field.name} for ${price}\u20ac."
         )
     }
 
@@ -1658,7 +1676,7 @@ class WebSocketBrokerController(
             action,
             gameState,
             "JAIL_FINE_PAID",
-            "${player.name} paid 50M to get out of jail."
+            "${player.name} paid 50\u20ac to get out of jail."
         )
     }
 
@@ -1696,6 +1714,25 @@ class WebSocketBrokerController(
     ) {
         val landedField = gameState.fields.getOrNull(player.position) ?: return
 
+        if (landedField is GoToJailField) {
+            player.inJail = true
+            player.position = 10
+            player.jailTurns = 0
+            player.consecutiveDoublets = 0
+            gameState.phase = GamePhase.TURN_END
+
+            messagingTemplate.convertAndSend(
+                "/topic/game/${action.gameId}",
+                GameEvent(
+                    gameId = action.gameId,
+                    event = "PLAYER_JAILED",
+                    gameState = gameState,
+                    message = "${player.name} landed on Go To Jail!"
+                )
+            )
+            return
+        }
+
         handleTaxFieldLanding(action, gameState, player, landedField)
         if (gameState.phase == GamePhase.PAYING_RENT) return
 
@@ -1723,7 +1760,7 @@ class WebSocketBrokerController(
                     gameId = action.gameId,
                     event = GameEvent.TAX_PAID,
                     gameState = gameState,
-                    message = "${player.name} paid ${taxAmount}€ tax."
+                    message = "${player.name} paid ${taxAmount}\u20ac tax."
                 )
             )
         } else {
@@ -1733,6 +1770,7 @@ class WebSocketBrokerController(
                 source = PaymentSource.TAX,
                 sourceFieldId = landedField.id,
                 creditorPlayerId = null,
+                debtorPlayerId = player.id,
                 debtorCanPayAfterAssets = PaymentService.canPayAfterAssets(
                     player,
                     gameState.fields,
@@ -1746,7 +1784,7 @@ class WebSocketBrokerController(
                     gameId = action.gameId,
                     event = GameEvent.TAX_DUE,
                     gameState = gameState,
-                    message = "${player.name} owes ${taxAmount}€ tax."
+                    message = "${player.name} owes ${taxAmount}\u20ac tax."
                 )
             )
         }
@@ -1779,6 +1817,7 @@ class WebSocketBrokerController(
                 source = PaymentSource.RENT,
                 sourceFieldId = landedField.id,
                 creditorPlayerId = ownerId,
+                debtorPlayerId = player.id,
                 debtorCanPayAfterAssets = PaymentService.canPayAfterAssets(player, gameState.fields, rent)
             )
             messagingTemplate.convertAndSend(
@@ -1787,7 +1826,7 @@ class WebSocketBrokerController(
                     gameId = action.gameId,
                     event = GameEvent.RENT_DUE,
                     gameState = gameState,
-                    message = "${player.name} owes ${rent}M rent to ${owner.name} (${landedField.name})."
+                    message = "${player.name} owes ${rent}\u20ac rent to ${owner.name} (${landedField.name})."
                 )
             )
         }
@@ -1809,7 +1848,7 @@ class WebSocketBrokerController(
                     gameId = action.gameId,
                     event = GameEvent.FREE_PARKING_COLLECTED,
                     gameState = gameState,
-                    message = "${player.name} collected ${collectedAmount}M from Free Parking!"
+                    message = "${player.name} collected ${collectedAmount}\u20ac from Free Parking!"
                 )
             )
         }
@@ -1907,7 +1946,8 @@ class WebSocketBrokerController(
             amount = 1200,
             source = PaymentSource.RENT,
             sourceFieldId = debtor.position,
-            creditorPlayerId = creditor?.id
+            creditorPlayerId = creditor?.id,
+            debtorPlayerId = debtor.id
         )
         gameState.phase = GamePhase.PAYING_RENT
         gameState.currentActionCard = null
@@ -1986,7 +2026,7 @@ class WebSocketBrokerController(
                  }
                  player.money -= pending.amount
                  creditor.money += pending.amount
-                 GameEvent.RENT_PAID to "${player.name} paid ${pending.amount}M to ${creditor.name}."
+                 GameEvent.RENT_PAID to "${player.name} paid ${pending.amount}\u20ac to ${creditor.name}."
              }
              PaymentSource.TAX -> {
                  // Tax: money goes to Free Parking pot
@@ -1996,7 +2036,7 @@ class WebSocketBrokerController(
                  }
                  player.money -= pending.amount
                  gameState.freeParkingMoney += pending.amount
-                 GameEvent.TAX_PAID to "${player.name} paid ${pending.amount}M tax."
+                 GameEvent.TAX_PAID to "${player.name} paid ${pending.amount}\u20ac tax."
              }
              else -> {
                  sendGameError(action, gameState, "Unsupported payment source: ${pending.source}")
@@ -2026,7 +2066,7 @@ class WebSocketBrokerController(
                 gameId = action.gameId,
                 event = GameEvent.PAYMENT_FAILED,
                 gameState = gameState,
-                message = "Insufficient funds. Need \$$amount but have \$${gameState.currentPlayer?.money ?: 0}."
+                message = "Insufficient funds. Need ${amount}\u20ac but have ${gameState.currentPlayer?.money ?: 0}\u20ac."
             )
         )
     }
@@ -2113,7 +2153,7 @@ class WebSocketBrokerController(
                     )
                 )
             } else {
-                sendGameError(action, gameState, "Not enough money to unmortgage. Need ${unmortgageCost}M.")
+                sendGameError(action, gameState, "Not enough money to unmortgage. Need ${unmortgageCost}\u20ac.")
             }
         }
     }
@@ -2232,7 +2272,7 @@ class WebSocketBrokerController(
                 gameId = action.gameId,
                 event = GameEvent.BANKRUPTCY_DECLARED,
                 gameState = gameState,
-                message = "${player.name} went bankrupt (debt: ${totalDebt}M, assets: ${totalAssetValue}M)."
+                message = "${player.name} went bankrupt (debt: ${totalDebt}\u20ac, assets: ${totalAssetValue}\u20ac)."
             )
         )
         checkAndHandleGameOver(gameState)
@@ -2339,7 +2379,7 @@ class WebSocketBrokerController(
                 action,
                 gameState,
                 "CHEATER_REPORTED",
-                "${reporter.name} successfully reported ${reported.name} for cheating! ${reported.name} paid a 500M fine to ${reporter.name}."
+                "${reporter.name} successfully reported ${reported.name} for cheating! ${reported.name} paid a 500\u20ac fine to ${reporter.name}."
             )
         } else {
             reporter.money -= 500
@@ -2349,7 +2389,7 @@ class WebSocketBrokerController(
                 action,
                 gameState,
                 "CHEATER_REPORT_FAILED",
-                "${reporter.name} falsely accused ${reported.name} of cheating, and pays them a 500M fine!"
+                "${reporter.name} falsely accused ${reported.name} of cheating, and pays them a 500\u20ac fine!"
             )
         }
     }
