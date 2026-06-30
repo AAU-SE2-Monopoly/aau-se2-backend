@@ -347,6 +347,19 @@ class WebSocketBrokerController(
         }
         return -1
     }
+
+    private fun resolveMoveToTarget(
+        currentPos: Int,
+        fields: List<Field>,
+        targetFieldId: Int
+    ): Int? {
+        val target = when (targetFieldId) {
+            -1 -> findNearestOfType(currentPos, fields) { it is RailroadField }
+            -2 -> findNearestOfType(currentPos, fields) { it is UtilityField }
+            else -> targetFieldId
+        }
+        return target.takeIf { it in fields.indices }
+    }
     
     private fun drawChanceCard(gameState: GameState): Card {
         if (gameState.chanceCards.isEmpty()) {
@@ -397,11 +410,7 @@ class WebSocketBrokerController(
             CardAction.MOVE_TO -> {
                 if (card.targetFieldId != null) {
                     val oldPosition = player.position
-                    val target = when (card.targetFieldId) {
-                        -1 -> findNearestOfType(oldPosition, gameState.fields) { it is RailroadField }
-                        -2 -> findNearestOfType(oldPosition, gameState.fields) { it is UtilityField }
-                        else -> card.targetFieldId!!
-                    }
+                    val target = resolveMoveToTarget(oldPosition, gameState.fields, card.targetFieldId!!) ?: return
                     player.position = target
                     if (target < oldPosition && target != 30) player.money += 200
                 }
@@ -1297,6 +1306,13 @@ class WebSocketBrokerController(
                 sendGameError(action, gameState, "Player not found in game.")
                 return
             }
+        if (card.action == CardAction.MOVE_TO && card.targetFieldId != null) {
+            val target = resolveMoveToTarget(player.position, gameState.fields, card.targetFieldId!!)
+            if (target == null) {
+                sendGameError(action, gameState, "Action card target field could not be resolved.")
+                return
+            }
+        }
         executeCardAction(gameState, card, action.playerId)
         val movementPerformed = card.action == CardAction.MOVE_TO || card.action == CardAction.MOVE_FORWARD
 
@@ -2121,8 +2137,8 @@ class WebSocketBrokerController(
         action: GameAction,
         gameState: GameState
     ) {
-        if (gameState.phase == GamePhase.PAYING_RENT) {
-            sendGameError(action, gameState, "Cannot unmortgage while rent is due.")
+        if (isPendingPaymentDebtor(gameState, action.playerId)) {
+            sendGameError(action, gameState, "You cannot unmortgage while you have a pending payment.")
             return
         }
 

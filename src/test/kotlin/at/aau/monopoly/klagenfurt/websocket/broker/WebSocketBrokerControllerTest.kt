@@ -6,6 +6,7 @@ import at.aau.monopoly.klagenfurt.messaging.dtos.GameEvent
 import at.aau.monopoly.klagenfurt.messaging.dtos.LobbyEvent
 import at.aau.monopoly.klagenfurt.model.BoardFactory
 import at.aau.monopoly.klagenfurt.model.DiceRoll
+import at.aau.monopoly.klagenfurt.model.GameState
 import at.aau.monopoly.klagenfurt.model.Player
 import at.aau.monopoly.klagenfurt.model.PaymentSource
 import at.aau.monopoly.klagenfurt.model.PendingPayment
@@ -23,6 +24,7 @@ import org.springframework.messaging.simp.SimpMessagingTemplate
 import org.springframework.web.socket.CloseStatus
 import org.springframework.web.socket.messaging.SessionDisconnectEvent
 import java.security.Principal
+import at.aau.monopoly.klagenfurt.model.field.ChanceField
 import at.aau.monopoly.klagenfurt.model.field.RailroadField
 import at.aau.monopoly.klagenfurt.model.field.UtilityField
 
@@ -3910,7 +3912,35 @@ class WebSocketBrokerControllerTest {
 
         val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
         assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("Cannot unmortgage while rent is due"))
+        assertTrue(event.message!!.contains("pending payment"))
+    }
+
+    @Test
+    fun `UNMORTGAGE allows non-debtor during PAYING_RENT phase`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 500))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee", money = 500))
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(
+            amount = 200,
+            source = PaymentSource.RENT,
+            sourceFieldId = 1,
+            creditorPlayerId = "host-2",
+            debtorPlayerId = "host-1"
+        )
+        gameState.currentPlayerIndex = 0
+        val prop = gameState.fields[3] as PropertyField
+        prop.ownerId = "host-2"
+        prop.isMortgaged = true
+        gameState.players[1].ownedPropertyIds.add(3)
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-2", action = "UNMORTGAGE_PROPERTY",
+            payload = mutableMapOf("fieldId" to "3")))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals(GameEvent.PROPERTY_UNMORTGAGED, event.event)
+        assertFalse(prop.isMortgaged)
     }
 
     @Test
@@ -4773,6 +4803,38 @@ class WebSocketBrokerControllerTest {
         controller.handleAction(GameAction(gameState.gameId, "p1", "EXECUTE_ACTION"))
 
         assertEquals(5, player.position)
+    }
+
+    @Test
+    fun `executeAction MOVE_TO with unresolved nearest railroad sends error and keeps position`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val player = Player(id = "p1", name = "Alice", money = 1500, position = 0)
+        val gameState = GameState(
+            gameId = "custom-game",
+            fields = (0 until 40).map { id -> ChanceField(id = id, name = "Field $id") },
+            players = mutableListOf(player),
+            currentPlayerIndex = 0,
+            phase = GamePhase.BUYING,
+            currentActionCard = ChanceCard(
+                id = 11,
+                description = "Advance to nearest Railroad",
+                action = CardAction.MOVE_TO,
+                targetFieldId = -1
+            )
+        )
+        val gamesField = GameController::class.java.getDeclaredField("games")
+        gamesField.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val games = gamesField.get(gameController) as java.util.concurrent.ConcurrentHashMap<String, GameState>
+        games[gameState.gameId] = gameState
+
+        controller.handleAction(GameAction(gameState.gameId, "p1", "EXECUTE_ACTION"))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("target field could not be resolved"))
+        assertEquals(0, player.position)
+        assertNotNull(gameState.currentActionCard)
     }
 
     @Test
