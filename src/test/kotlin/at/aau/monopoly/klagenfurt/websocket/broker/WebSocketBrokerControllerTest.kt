@@ -6742,6 +6742,45 @@ class WebSocketBrokerControllerTest {
         assertTrue(offer.requestPropertyIds.isEmpty())
         assertTrue(offer.acceptedByPlayerIds.isEmpty())
     }
+
+    @Test
+    fun `PROPOSE_TRADE starts live offer while current player has pending payment`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(
+            amount = 500,
+            source = PaymentSource.RENT,
+            sourceFieldId = 1,
+            creditorPlayerId = "player-2",
+            debtorPlayerId = "host-1"
+        )
+
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "PROPOSE_TRADE",
+                payload = mutableMapOf("toPlayerId" to "player-2")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        val offer = gameState.pendingTradeOffer
+
+        assertEquals(GameEvent.TRADE_PROPOSED, event.event)
+        assertEquals(GamePhase.PAYING_RENT, gameState.phase)
+        assertNotNull(gameState.pendingPayment)
+        assertNotNull(offer)
+        assertEquals("host-1", offer!!.fromPlayerId)
+        assertEquals("player-2", offer.toPlayerId)
+    }
+
     @Test
     fun `DECLARE_BANKRUPTCY with only one active player left should send GAME_OVER`() {
         val (controller, gameController, messagingTemplate) = createController()
@@ -7239,7 +7278,7 @@ class WebSocketBrokerControllerTest {
     }
 
     @Test
-    fun `PROPOSE_TRADE rejects inactive phases and pending payments`() {
+    fun `PROPOSE_TRADE rejects inactive phases`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
@@ -7252,15 +7291,6 @@ class WebSocketBrokerControllerTest {
         var event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
         assertEquals("ERROR", event.event)
         assertTrue(event.message!!.contains("active game"))
-
-        gameState.phase = GamePhase.PAYING_RENT
-        Mockito.clearInvocations(messagingTemplate)
-        controller.handleAction(
-            GameAction(gameState.gameId, "host-1", "PROPOSE_TRADE", mutableMapOf("toPlayerId" to "player-2"))
-        )
-        event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("payment is due"))
     }
 
     @Test

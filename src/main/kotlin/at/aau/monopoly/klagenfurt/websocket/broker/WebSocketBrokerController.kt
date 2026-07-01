@@ -806,13 +806,16 @@ class WebSocketBrokerController(
             sendGameError(action, gameState, "Trades are only available during an active game.")
             return
         }
-        if (gameState.phase == GamePhase.PAYING_RENT) {
-            sendGameError(action, gameState, "Cannot propose a trade while a payment is due.")
-            return
-        }
 
         val currentPlayer = gameState.currentPlayer
         val existingOffer = gameState.pendingTradeOffer
+        if (gameState.phase == GamePhase.PAYING_RENT &&
+            existingOffer == null &&
+            !isPendingPaymentDebtor(gameState, action.playerId)
+        ) {
+            sendGameError(action, gameState, "Only the player with the pending payment can start a trade.")
+            return
+        }
         if (existingOffer == null && currentPlayer?.id != action.playerId) {
             sendGameError(action, gameState, "Trades can only be started on your turn.")
             return
