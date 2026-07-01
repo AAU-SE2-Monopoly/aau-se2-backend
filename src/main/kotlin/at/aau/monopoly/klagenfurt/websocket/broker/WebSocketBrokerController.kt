@@ -2042,6 +2042,7 @@ class WebSocketBrokerController(
 
         val creditor = gameState.players.firstOrNull { it.id != debtor.id }
 
+        prepareDebugBankruptcyDebtor(gameState, debtor)
         debtor.money = 25
         val debugDebt = 1200
         gameState.pendingPayment = PendingPayment(
@@ -2061,6 +2062,23 @@ class WebSocketBrokerController(
             "RENT_DUE",
             "DEBUG: bankruptcy setup active."
         )
+    }
+
+    private fun prepareDebugBankruptcyDebtor(gameState: GameState, debtor: Player) {
+        gameState.fields
+            .filterIsInstance<OwnableField>()
+            .filter { it.ownerId == debtor.id }
+            .forEach { field ->
+                field.ownerId = null
+                field.isMortgaged = false
+                if (field is PropertyField) {
+                    field.houses = 0
+                    field.hasHotel = false
+                }
+            }
+
+        debtor.ownedPropertyIds.clear()
+        debtor.getOutOfJailCards = 0
     }
 
     private fun handleDebugForceDoublet(

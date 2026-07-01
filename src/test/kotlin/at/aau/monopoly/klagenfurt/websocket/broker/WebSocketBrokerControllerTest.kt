@@ -15,6 +15,7 @@ import at.aau.monopoly.klagenfurt.model.card.CommunityChestCard
 import at.aau.monopoly.klagenfurt.model.enums.CardAction
 import at.aau.monopoly.klagenfurt.model.enums.GamePhase
 import at.aau.monopoly.klagenfurt.model.enums.PropertyColor
+import at.aau.monopoly.klagenfurt.model.field.OwnableField
 import at.aau.monopoly.klagenfurt.model.field.PropertyField
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
@@ -291,11 +292,12 @@ class WebSocketBrokerControllerTest {
         val alice = gameState.players.first { it.id == "host-1" }
         assertEquals(25, alice.money)
         assertNotNull(gameState.pendingPayment)
+        assertFalse(gameState.pendingPayment!!.debtorCanPayAfterAssets)
         assertEquals(GamePhase.PAYING_RENT, gameState.phase)
     }
 
     @Test
-    fun `DEBUG_SETUP_BANKRUPTCY after debug forward marks debtor able to raise funds`() {
+    fun `DEBUG_SETUP_BANKRUPTCY after debug forward allows bankruptcy confirmation`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
@@ -311,6 +313,8 @@ class WebSocketBrokerControllerTest {
                 action = "DEBUG_FORWARD_GAME"
             )
         )
+        val alice = gameState.players.first { it.id == "host-1" }
+        assertTrue(alice.ownedPropertyIds.isNotEmpty())
         Mockito.clearInvocations(messagingTemplate)
 
         controller.handleAction(
@@ -323,7 +327,24 @@ class WebSocketBrokerControllerTest {
 
         val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
         assertEquals("RENT_DUE", event.event)
-        assertTrue(gameState.pendingPayment!!.debtorCanPayAfterAssets)
+        assertFalse(gameState.pendingPayment!!.debtorCanPayAfterAssets)
+        assertTrue(alice.ownedPropertyIds.isEmpty())
+        assertFalse(gameState.fields.filterIsInstance<OwnableField>().any { it.ownerId == alice.id })
+
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DECLARE_BANKRUPTCY"
+            )
+        )
+
+        val events = captureLastMessages(messagingTemplate, 2).map { it.second as GameEvent }
+        assertTrue(alice.eliminated)
+        assertNull(gameState.pendingPayment)
+        assertTrue(events.any { it.event == GameEvent.BANKRUPTCY_DECLARED })
     }
 
     @Test
