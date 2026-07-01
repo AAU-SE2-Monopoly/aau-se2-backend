@@ -221,6 +221,34 @@ class WebSocketBrokerController(
                         handleDebugSetupBankruptcy(action, gameState)
                     }
                 }
+                "DEBUG_FORCE_DOUBLET" -> {
+                    if (!debugMode) {
+                        sendGameError(action, gameState, "Debug actions are disabled.")
+                    } else {
+                        handleDebugForceDoublet(action, gameState)
+                    }
+                }
+                "DEBUG_FORCE_JAIL" -> {
+                    if (!debugMode) {
+                        sendGameError(action, gameState, "Debug actions are disabled.")
+                    } else {
+                        handleDebugForceJail(action, gameState)
+                    }
+                }
+                "DEBUG_FORCE_BACKWARDS" -> {
+                    if (!debugMode) {
+                        sendGameError(action, gameState, "Debug actions are disabled.")
+                    } else {
+                        handleDebugForceBackwards(action, gameState)
+                    }
+                }
+                "DEBUG_FORCE_GAME_OVER" -> {
+                    if (!debugMode) {
+                        sendGameError(action, gameState, "Debug actions are disabled.")
+                    } else {
+                        handleDebugForceGameOver(action, gameState)
+                    }
+                }
                 // ═══ DEBUG END ═══
 
                 else -> {
@@ -1958,12 +1986,14 @@ class WebSocketBrokerController(
         val creditor = gameState.players.firstOrNull { it.id != debtor.id }
 
         debtor.money = 25
+        val debugDebt = 1200
         gameState.pendingPayment = PendingPayment(
-            amount = 1200,
+            amount = debugDebt,
             source = PaymentSource.RENT,
             sourceFieldId = debtor.position,
             creditorPlayerId = creditor?.id,
-            debtorPlayerId = debtor.id
+            debtorPlayerId = debtor.id,
+            debtorCanPayAfterAssets = PaymentService.canPayAfterAssets(debtor, gameState.fields, debugDebt)
         )
         gameState.phase = GamePhase.PAYING_RENT
         gameState.currentActionCard = null
@@ -1973,6 +2003,91 @@ class WebSocketBrokerController(
             gameState,
             "RENT_DUE",
             "DEBUG: bankruptcy setup active."
+        )
+    }
+
+    private fun handleDebugForceDoublet(
+        action: GameAction,
+        gameState: GameState
+    ) {
+        if (!validateCurrentPlayerTurn(action, gameState)) return
+        if (gameState.phase != GamePhase.ROLLING) {
+            sendGameError(action, gameState, "Can only force doublet during ROLLING phase.")
+            return
+        }
+
+        val forceAction = action.copy(payload = action.payload.toMutableMap().apply { this["cheat"] = "true" })
+        handleRollDice(forceAction, gameState)
+    }
+
+    private fun handleDebugForceJail(
+        action: GameAction,
+        gameState: GameState
+    ) {
+        if (!validateCurrentPlayerTurn(action, gameState)) return
+        if (gameState.phase != GamePhase.ROLLING) {
+            sendGameError(action, gameState, "Can only force jail during ROLLING phase.")
+            return
+        }
+
+        val player = gameState.currentPlayer!!
+        player.consecutiveDoublets = 2
+        val forceAction = action.copy(payload = action.payload.toMutableMap().apply { this["cheat"] = "true" })
+        handleRollDice(forceAction, gameState)
+    }
+
+    private fun handleDebugForceBackwards(
+        action: GameAction,
+        gameState: GameState
+    ) {
+        if (!validateCurrentPlayerTurn(action, gameState)) return
+
+        val player = gameState.currentPlayer!!
+        val card = ChanceCard(
+            id = 888,
+            description = "DEBUG: Forced backwards movement.",
+            action = CardAction.MOVE_FORWARD,
+            moveSpaces = -3
+        )
+        gameState.currentActionCard = card
+        gameState.hasDrawnCardThisTurn = true
+
+        sendGameEvent(
+            action,
+            gameState,
+            "ACTION_DRAWN",
+            "DEBUG: Card forced: ${card.description}"
+        )
+    }
+
+    private fun handleDebugForceGameOver(
+        action: GameAction,
+        gameState: GameState
+    ) {
+        if (gameState.phase == GamePhase.WAITING) {
+            sendGameError(action, gameState, "Start the game before forcing game over.")
+            return
+        }
+
+        val winnerId = action.playerId
+        gameState.players.forEach { player ->
+            if (player.id != winnerId) {
+                player.money = 0
+                player.ownedPropertyIds.clear()
+                player.eliminated = true
+            }
+        }
+
+        gameState.phase = GamePhase.FINISHED
+        
+        messagingTemplate.convertAndSend(
+            "/topic/game/${gameState.gameId}",
+            GameEvent(
+                gameId = gameState.gameId,
+                event = GameEvent.GAME_OVER,
+                gameState = gameState,
+                message = "DEBUG: Game over forced."
+            )
         )
     }
 

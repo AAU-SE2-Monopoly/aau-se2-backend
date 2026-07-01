@@ -294,6 +294,38 @@ class WebSocketBrokerControllerTest {
     }
 
     @Test
+    fun `DEBUG_SETUP_BANKRUPTCY after debug forward marks debtor able to raise funds`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.BUYING
+
+        controller.setDebugMode(true)
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DEBUG_FORWARD_GAME"
+            )
+        )
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DEBUG_SETUP_BANKRUPTCY"
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("RENT_DUE", event.event)
+        assertTrue(gameState.pendingPayment!!.debtorCanPayAfterAssets)
+    }
+
+    @Test
     fun `MORTGAGE_PROPERTY when wrong player returns error`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
@@ -345,6 +377,102 @@ class WebSocketBrokerControllerTest {
         val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
         assertEquals("ERROR", event.event)
         assertTrue(event.message!!.contains("Not enough money"))
+    }
+
+
+    private fun captureAllEvents(messagingTemplate: SimpMessagingTemplate): List<GameEvent> {
+        val payloadCaptor = ArgumentCaptor.forClass(Any::class.java)
+        Mockito.verify(messagingTemplate, Mockito.atLeast(0))
+            .convertAndSend(Mockito.anyString(), payloadCaptor.capture())
+        return payloadCaptor.allValues.filterIsInstance<GameEvent>()
+    }
+
+    @Test
+    fun `DEBUG_FORCE_DOUBLET forces a doublet roll`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.ROLLING
+
+        controller.setDebugMode(true)
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DEBUG_FORCE_DOUBLET"
+            )
+        )
+
+        val diceEvent = captureAllEvents(messagingTemplate).find { it.event == "DICE_ROLLED" }
+        assertNotNull(diceEvent, "DICE_ROLLED event should be present")
+        assertTrue(gameState.lastDiceRoll!!.isDouble, "Last dice roll should be a doublet")
+    }
+
+    @Test
+    fun `DEBUG_FORCE_JAIL forces player to jail via third doublet`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.ROLLING
+
+        controller.setDebugMode(true)
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DEBUG_FORCE_JAIL"
+            )
+        )
+
+        val diceEvent = captureAllEvents(messagingTemplate).find { it.event == "DICE_ROLLED" }
+        assertNotNull(diceEvent, "DICE_ROLLED event should be present")
+        assertTrue(gameState.players[0].inJail, "Player should be in jail")
+        assertEquals(10, gameState.players[0].position, "Player should be at position 10")
+    }
+
+    @Test
+    fun `DEBUG_FORCE_BACKWARDS forces a backwards movement card`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.BUYING
+
+        controller.setDebugMode(true)
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DEBUG_FORCE_BACKWARDS"
+            )
+        )
+
+        val drawnEvent = captureAllEvents(messagingTemplate).find { it.event == "ACTION_DRAWN" }
+        assertNotNull(drawnEvent, "ACTION_DRAWN event should be present")
+        assertNotNull(gameState.currentActionCard, "GameState should have a currentActionCard")
+        assertEquals(CardAction.MOVE_FORWARD, gameState.currentActionCard!!.action)
+        assertEquals(-3, gameState.currentActionCard!!.moveSpaces)
+    }
+
+    @Test
+    fun `DEBUG actions fail when debug mode disabled`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.advanceTurn()
+
+        val actions = listOf("DEBUG_FORCE_DOUBLET", "DEBUG_FORCE_JAIL", "DEBUG_FORCE_BACKWARDS", "DEBUG_FORCE_GAME_OVER")
+
+        controller.setDebugMode(false)
+        for (actionType in actions) {
+            Mockito.clearInvocations(messagingTemplate)
+            controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = actionType))
+            val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+            assertEquals("ERROR", event.event)
+            assertTrue(event.message!!.contains("Debug actions are disabled"))
+        }
     }
 
 
