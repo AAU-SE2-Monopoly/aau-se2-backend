@@ -4128,10 +4128,11 @@ class WebSocketBrokerControllerTest {
     }
 
     @Test
-    fun `DECLARE_BANKRUPTCY rejects when player has buildings`() {
+    fun `DECLARE_BANKRUPTCY succeeds with buildings when total assets are insufficient`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 10))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee", money = 500))
         gameState.phase = GamePhase.PAYING_RENT
         gameState.pendingPayment = PendingPayment(amount = 100, source = PaymentSource.RENT, sourceFieldId = 1,
             creditorPlayerId = "host-2")
@@ -4143,16 +4144,20 @@ class WebSocketBrokerControllerTest {
 
         controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "DECLARE_BANKRUPTCY"))
 
-        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("Sell all houses and hotels"))
+        val events = captureLastMessages(messagingTemplate, 2).map { it.second as GameEvent }
+        assertTrue(events.any { it.event == GameEvent.BANKRUPTCY_DECLARED })
+        assertTrue(gameState.players[0].eliminated)
+        assertEquals("host-2", prop.ownerId)
+        assertEquals(0, prop.houses)
+        assertFalse(prop.hasHotel)
     }
 
     @Test
-    fun `DECLARE_BANKRUPTCY rejects when player has unmortgaged properties`() {
+    fun `DECLARE_BANKRUPTCY succeeds with unmortgaged properties when total assets are insufficient`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 10))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee", money = 500))
         gameState.phase = GamePhase.PAYING_RENT
         gameState.pendingPayment = PendingPayment(amount = 100, source = PaymentSource.RENT, sourceFieldId = 1,
             creditorPlayerId = "host-2")
@@ -4163,9 +4168,11 @@ class WebSocketBrokerControllerTest {
 
         controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "DECLARE_BANKRUPTCY"))
 
-        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("Mortgage all properties"))
+        val events = captureLastMessages(messagingTemplate, 2).map { it.second as GameEvent }
+        assertTrue(events.any { it.event == GameEvent.BANKRUPTCY_DECLARED })
+        assertTrue(gameState.players[0].eliminated)
+        assertEquals("host-2", prop.ownerId)
+        assertFalse(prop.isMortgaged)
     }
 
     @Test

@@ -2391,22 +2391,6 @@ class WebSocketBrokerController(
             return
         }
 
-        val hasBuildings = gameState.fields
-            .filterIsInstance<PropertyField>()
-            .any { it.ownerId == player.id && (it.houses > 0 || it.hasHotel) }
-        if (hasBuildings) {
-            sendGameError(action, gameState, "Sell all houses and hotels before declaring bankruptcy.")
-            return
-        }
-
-        val hasUnmortgaged = gameState.fields
-            .filterIsInstance<OwnableField>()
-            .any { it.ownerId == player.id && !it.isMortgaged }
-        if (hasUnmortgaged) {
-            sendGameError(action, gameState, "Mortgage all properties before declaring bankruptcy.")
-            return
-        }
-
         if (PaymentService.canPayAfterAssets(player, gameState.fields, pending.amount)) {
             sendGameError(action, gameState,
                 "You can still pay by mortgaging properties or selling buildings. Declare bankruptcy only if your total assets are insufficient.")
@@ -2417,17 +2401,10 @@ class WebSocketBrokerController(
         val ownedFields = gameState.fields.filterIsInstance<OwnableField>()
             .filter { it.ownerId == player.id }
         val ownedFieldIds = ownedFields.map { (it as Field).id }
-        val totalAssetValue = player.money + ownedFields.sumOf { field ->
-            val price = when (field) {
-                is PropertyField -> field.price
-                is RailroadField -> field.price
-                is UtilityField -> field.price
-                else -> 0
-            }
-            price / 2
-        }
+        val totalAssetValue = player.money + PaymentService.calculateMaxRaiseableCash(player, gameState.fields)
         val totalDebt = pending.amount
         val propertiesCount = ownedFields.size
+        liquidateBuildingsForBankruptcy(player, gameState.fields)
 
         if (creditorId != null) {
             val creditor = gameState.players.find { it.id == creditorId }
@@ -2485,6 +2462,21 @@ class WebSocketBrokerController(
             )
         )
         checkAndHandleGameOver(gameState)
+    }
+
+    private fun liquidateBuildingsForBankruptcy(player: Player, fields: List<Field>) {
+        fields.filterIsInstance<PropertyField>()
+            .filter { it.ownerId == player.id }
+            .forEach { property ->
+                if (property.hasHotel) {
+                    player.money += (property.hotelCost / 2) + (4 * (property.houseCost / 2))
+                    property.hasHotel = false
+                }
+                if (property.houses > 0) {
+                    player.money += property.houses * (property.houseCost / 2)
+                    property.houses = 0
+                }
+            }
     }
 
     private fun validateCurrentPlayerTurn(
