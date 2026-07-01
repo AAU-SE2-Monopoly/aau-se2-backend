@@ -14,6 +14,7 @@ import at.aau.monopoly.klagenfurt.model.card.ChanceCard
 import at.aau.monopoly.klagenfurt.model.card.CommunityChestCard
 import at.aau.monopoly.klagenfurt.model.enums.CardAction
 import at.aau.monopoly.klagenfurt.model.enums.GamePhase
+import at.aau.monopoly.klagenfurt.model.enums.PropertyColor
 import at.aau.monopoly.klagenfurt.model.field.PropertyField
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
@@ -5076,6 +5077,72 @@ class WebSocketBrokerControllerTest {
 
         // Check if houses were sold.
         assertTrue(prop1.houses < 3 || prop3.houses < 2)
+    }
+
+    @Test
+    fun `forceEndTurn auto liquidation preserves even building rule`() {
+        val (controller, gameController, _) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 0))
+        gameState.currentPlayerIndex = 0
+
+        val player = gameState.players[0]
+        val group = gameState.fields
+            .filterIsInstance<PropertyField>()
+            .filter { it.color == PropertyColor.LIGHT_BLUE }
+        assertEquals(3, group.size)
+        group.forEach { property ->
+            property.ownerId = player.id
+            property.houses = 4
+            player.ownedPropertyIds.add(property.id)
+        }
+
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(
+            amount = group.first().houseCost,
+            source = PaymentSource.TAX,
+            sourceFieldId = 4
+        )
+
+        controller.forceEndTurn(gameState.gameId)
+
+        assertEquals(listOf(3, 3, 4), group.map { it.houses }.sorted())
+        assertNull(gameState.pendingPayment)
+        assertFalse(player.eliminated)
+    }
+
+    @Test
+    fun `forceEndTurn declares bankruptcy after legal auto liquidation cannot cover debt`() {
+        val (controller, gameController, _) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 0))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee", money = 1500))
+        gameState.currentPlayerIndex = 0
+
+        val player = gameState.players[0]
+        val group = gameState.fields
+            .filterIsInstance<PropertyField>()
+            .filter { it.color == PropertyColor.LIGHT_BLUE }
+        group.forEach { property ->
+            property.ownerId = player.id
+            property.houses = 4
+            player.ownedPropertyIds.add(property.id)
+        }
+
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(
+            amount = 10_000,
+            source = PaymentSource.RENT,
+            sourceFieldId = group.first().id,
+            creditorPlayerId = "host-2"
+        )
+
+        controller.forceEndTurn(gameState.gameId)
+
+        assertTrue(player.eliminated)
+        assertNull(gameState.pendingPayment)
+        assertTrue(group.all { it.houses == 0 && !it.hasHotel })
+        assertTrue(group.all { it.ownerId == "host-2" })
     }
 
     @Test

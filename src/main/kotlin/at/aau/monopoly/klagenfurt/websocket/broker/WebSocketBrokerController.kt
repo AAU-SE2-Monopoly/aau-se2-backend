@@ -1280,33 +1280,90 @@ class WebSocketBrokerController(
         player: Player,
         amountDue: Int
     ) {
-        val owned = gameState.fields.filterIsInstance<PropertyField>()
+        val ownedProperties = gameState.fields.filterIsInstance<PropertyField>()
             .filter { it.ownerId == player.id }
 
-        owned.filter { it.hasHotel }.forEach {
-            if (player.money < amountDue) {
-                it.hasHotel = false
-                it.houses = 4
-                player.money += it.hotelCost / 2
-            }
+        autoSellHotelsEvenly(player, ownedProperties, amountDue)
+        autoSellHousesEvenly(player, ownedProperties, amountDue)
+        autoMortgagePropertiesForDebt(gameState, player, amountDue)
+
+        recomputeCanPayAfterAssets(gameState)
+    }
+
+    private fun autoSellHotelsEvenly(
+        player: Player,
+        ownedProperties: List<PropertyField>,
+        amountDue: Int
+    ) {
+        val groups = ownedProperties.groupBy { it.color }
+        while (player.money < amountDue) {
+            val property = groups.values
+                .asSequence()
+                .flatMap { group ->
+                    group.asSequence().filter { candidate ->
+                        candidate.hasHotel && group
+                            .filter { it.id != candidate.id }
+                            .all { it.hasHotel || it.houses >= 3 }
+                    }
+                }
+                .maxWithOrNull(compareBy<PropertyField> { it.hotelCost }.thenBy { it.id })
+                ?: break
+
+            property.hasHotel = false
+            property.houses = 4
+            player.money += property.hotelCost / 2
         }
-        owned.sortedByDescending { it.houses }.forEach { prop ->
-            while (player.money < amountDue && prop.houses > 0) {
-                prop.houses -= 1
-                player.money += prop.houseCost / 2
-            }
+    }
+
+    private fun autoSellHousesEvenly(
+        player: Player,
+        ownedProperties: List<PropertyField>,
+        amountDue: Int
+    ) {
+        val groups = ownedProperties.groupBy { it.color }
+        while (player.money < amountDue) {
+            val property = groups.values
+                .asSequence()
+                .flatMap { group ->
+                    val maxHouses = group.maxOfOrNull { it.houses } ?: 0
+                    group.asSequence().filter {
+                        !it.hasHotel && it.houses > 0 && it.houses == maxHouses
+                    }
+                }
+                .maxWithOrNull(compareBy<PropertyField> { it.houses }.thenBy { it.houseCost }.thenBy { it.id })
+                ?: break
+
+            property.houses -= 1
+            player.money += property.houseCost / 2
         }
+    }
+
+    private fun autoMortgagePropertiesForDebt(
+        gameState: GameState,
+        player: Player,
+        amountDue: Int
+    ) {
         gameState.fields.filterIsInstance<OwnableField>()
             .filter { it.ownerId == player.id && !it.isMortgaged }
             .forEach { field ->
                 if (player.money < amountDue) {
-                    val hasBuildings = field is PropertyField && (field.houses > 0 || field.hasHotel)
-                    if (!hasBuildings) {
+                    if (canMortgageAfterAutoLiquidation(gameState, player.id, field)) {
                         PaymentService.mortgageProperty(player, field)
                     }
                 }
             }
-        recomputeCanPayAfterAssets(gameState)
+    }
+
+    private fun canMortgageAfterAutoLiquidation(
+        gameState: GameState,
+        playerId: String,
+        field: OwnableField
+    ): Boolean {
+        val property = field as? PropertyField ?: return true
+        return gameState.fields
+            .filterIsInstance<PropertyField>()
+            .filter { it.color == property.color && it.ownerId == playerId }
+            .none { it.houses > 0 || it.hasHotel }
     }
 
     private fun handleExecuteAction(
