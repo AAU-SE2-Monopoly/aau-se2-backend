@@ -221,6 +221,41 @@ class WebSocketBrokerController(
                         handleDebugSetupBankruptcy(action, gameState)
                     }
                 }
+                "DEBUG_LAND_ON_TAX_FIELD" -> {
+                    if (!debugMode) {
+                        sendGameError(action, gameState, "Debug actions are disabled.")
+                    } else {
+                        handleDebugLandOnTaxField(action, gameState)
+                    }
+                }
+                "DEBUG_EXECUTE_PAY_MONEY" -> {
+                    if (!debugMode) {
+                        sendGameError(action, gameState, "Debug actions are disabled.")
+                    } else {
+                        handleDebugExecutePayMoney(action, gameState)
+                    }
+                }
+                "DEBUG_EXECUTE_PAY_PER_BUILDING" -> {
+                    if (!debugMode) {
+                        sendGameError(action, gameState, "Debug actions are disabled.")
+                    } else {
+                        handleDebugExecutePayPerBuilding(action, gameState)
+                    }
+                }
+                "DEBUG_EXECUTE_PAY_EACH" -> {
+                    if (!debugMode) {
+                        sendGameError(action, gameState, "Debug actions are disabled.")
+                    } else {
+                        handleDebugExecutePayEach(action, gameState)
+                    }
+                }
+                "DEBUG_EXECUTE_COLLECT_FROM_EACH" -> {
+                    if (!debugMode) {
+                        sendGameError(action, gameState, "Debug actions are disabled.")
+                    } else {
+                        handleDebugExecuteCollectFromEach(action, gameState)
+                    }
+                }
                 "DEBUG_FORCE_DOUBLET" -> {
                     if (!debugMode) {
                         sendGameError(action, gameState, "Debug actions are disabled.")
@@ -432,8 +467,7 @@ class WebSocketBrokerController(
         when (card.action) {
             CardAction.COLLECT_MONEY -> player.money += card.amount
             CardAction.PAY_MONEY -> {
-                player.money -= card.amount
-                gameState.freeParkingMoney += card.amount
+                payToFreeParking(player, gameState, card.amount)
             }
             CardAction.MOVE_TO -> {
                 if (card.targetFieldId != null) {
@@ -467,20 +501,14 @@ class WebSocketBrokerController(
                 }
                 val total = card.perBuildingAmount * houses + card.perHotelAmount * hotels
                 if (total > 0) {
-                    player.money -= total
-                    gameState.freeParkingMoney += total
+                    payToFreeParking(player, gameState, total)
                 }
             }
-            CardAction.PAY_EACH_PLAYER -> gameState.players.forEach { other ->
-                if (other.id != playerId) {
-                    player.money -= card.amount
-                    other.money += card.amount
-                }
-            }
+            CardAction.PAY_EACH_PLAYER -> payEachPlayerCapped(player, gameState.players, card.amount)
             CardAction.COLLECT_FROM_EACH -> gameState.players.forEach { other ->
                 if (other.id != playerId) {
-                    other.money -= card.amount
-                    player.money += card.amount
+                    val paid = collectCapped(other, card.amount)
+                    player.money += paid
                 }
             }
         }
@@ -491,6 +519,47 @@ class WebSocketBrokerController(
                 is CommunityChestCard -> gameState.communityChestCards.add(card)
             }
         }
+    }
+
+    private fun payToFreeParking(player: Player, gameState: GameState, amount: Int) {
+        val paid = collectCapped(player, amount)
+        gameState.freeParkingMoney += paid
+    }
+
+    private fun payEachPlayerCapped(player: Player, players: List<Player>, amountPerPlayer: Int) {
+        if (amountPerPlayer <= 0) return
+
+        val recipients = players.filter { it.id != player.id }
+        if (recipients.isEmpty()) return
+
+        val totalOwed = amountPerPlayer * recipients.size
+        var remaining = player.money.coerceAtLeast(0).coerceAtMost(totalOwed)
+        if (remaining <= 0) {
+            player.money = player.money.coerceAtLeast(0)
+            return
+        }
+
+        player.money -= remaining
+        val baseShare = remaining / recipients.size
+        var remainder = remaining % recipients.size
+
+        recipients.forEach { recipient ->
+            val extra = if (remainder > 0) {
+                remainder -= 1
+                1
+            } else {
+                0
+            }
+            val paid = (baseShare + extra).coerceAtMost(amountPerPlayer)
+            recipient.money += paid
+        }
+    }
+
+    private fun collectCapped(player: Player, amount: Int): Int {
+        val available = player.money.coerceAtLeast(0)
+        val paid = available.coerceAtMost(amount.coerceAtLeast(0))
+        player.money = available - paid
+        return paid
     }
 
     private fun isPendingPaymentDebtor(
@@ -2082,6 +2151,121 @@ class WebSocketBrokerController(
 
         debtor.ownedPropertyIds.clear()
         debtor.getOutOfJailCards = 0
+    }
+
+    private fun handleDebugLandOnTaxField(
+        action: GameAction,
+        gameState: GameState
+    ) {
+        if (!validateCurrentPlayerTurn(action, gameState)) return
+
+        if (gameState.phase == GamePhase.WAITING) {
+            sendGameError(action, gameState, "Start the game before landing on a debug tax field.")
+            return
+        }
+
+        val player = gameState.currentPlayer ?: run {
+            sendGameError(action, gameState, "No current player available for debug tax field.")
+            return
+        }
+
+        val taxField = gameState.fields.filterIsInstance<TaxField>().firstOrNull()
+        if (taxField == null) {
+            sendGameError(action, gameState, "No tax field available.")
+            return
+        }
+
+        gameState.pendingPayment = null
+        gameState.currentActionCard = null
+        gameState.hasDrawnCardThisTurn = false
+        gameState.phase = GamePhase.BUYING
+        player.position = taxField.id
+
+        handleTaxFieldLanding(action, gameState, player, taxField)
+    }
+
+    private fun handleDebugExecutePayMoney(
+        action: GameAction,
+        gameState: GameState
+    ) {
+        if (!prepareDebugCardExecution(action, gameState, "execute pay-money")) return
+
+        gameState.currentActionCard = ChanceCard(
+            id = 891,
+            description = "DEBUG: Pay money to bank.",
+            action = CardAction.PAY_MONEY,
+            amount = 200
+        )
+        handleExecuteAction(action.copy(action = "EXECUTE_ACTION"), gameState)
+    }
+
+    private fun handleDebugExecutePayPerBuilding(
+        action: GameAction,
+        gameState: GameState
+    ) {
+        if (!prepareDebugCardExecution(action, gameState, "execute pay-per-building")) return
+
+        gameState.currentActionCard = ChanceCard(
+            id = 892,
+            description = "DEBUG: Pay per building.",
+            action = CardAction.PAY_PER_BUILDING,
+            perBuildingAmount = 40,
+            perHotelAmount = 115
+        )
+        handleExecuteAction(action.copy(action = "EXECUTE_ACTION"), gameState)
+    }
+
+    private fun handleDebugExecutePayEach(
+        action: GameAction,
+        gameState: GameState
+    ) {
+        if (!prepareDebugCardExecution(action, gameState, "execute pay-each")) return
+
+        gameState.currentActionCard = ChanceCard(
+            id = 889,
+            description = "DEBUG: Pay each player.",
+            action = CardAction.PAY_EACH_PLAYER,
+            amount = 50
+        )
+        handleExecuteAction(action.copy(action = "EXECUTE_ACTION"), gameState)
+    }
+
+    private fun handleDebugExecuteCollectFromEach(
+        action: GameAction,
+        gameState: GameState
+    ) {
+        if (!prepareDebugCardExecution(action, gameState, "execute collect-from-each")) return
+
+        gameState.currentActionCard = CommunityChestCard(
+            id = 890,
+            description = "DEBUG: Collect from each player.",
+            action = CardAction.COLLECT_FROM_EACH,
+            amount = 10
+        )
+        handleExecuteAction(action.copy(action = "EXECUTE_ACTION"), gameState)
+    }
+
+    private fun prepareDebugCardExecution(
+        action: GameAction,
+        gameState: GameState,
+        debugActionName: String
+    ): Boolean {
+        if (!validateCurrentPlayerTurn(action, gameState)) return false
+
+        if (gameState.phase == GamePhase.WAITING) {
+            sendGameError(action, gameState, "Start the game before using debug $debugActionName.")
+            return false
+        }
+
+        if (gameState.currentPlayer == null) {
+            sendGameError(action, gameState, "No current player available for debug $debugActionName.")
+            return false
+        }
+
+        gameState.pendingPayment = null
+        gameState.phase = GamePhase.BUYING
+        gameState.hasDrawnCardThisTurn = true
+        return true
     }
 
     private fun handleDebugForceDoublet(
