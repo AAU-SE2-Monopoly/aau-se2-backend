@@ -4,7 +4,9 @@ import at.aau.monopoly.klagenfurt.controller.GameController
 import at.aau.monopoly.klagenfurt.messaging.dtos.GameAction
 import at.aau.monopoly.klagenfurt.messaging.dtos.GameEvent
 import at.aau.monopoly.klagenfurt.messaging.dtos.LobbyEvent
+import at.aau.monopoly.klagenfurt.model.BoardFactory
 import at.aau.monopoly.klagenfurt.model.DiceRoll
+import at.aau.monopoly.klagenfurt.model.GameState
 import at.aau.monopoly.klagenfurt.model.Player
 import at.aau.monopoly.klagenfurt.model.PaymentSource
 import at.aau.monopoly.klagenfurt.model.PendingPayment
@@ -12,6 +14,8 @@ import at.aau.monopoly.klagenfurt.model.card.ChanceCard
 import at.aau.monopoly.klagenfurt.model.card.CommunityChestCard
 import at.aau.monopoly.klagenfurt.model.enums.CardAction
 import at.aau.monopoly.klagenfurt.model.enums.GamePhase
+import at.aau.monopoly.klagenfurt.model.enums.PropertyColor
+import at.aau.monopoly.klagenfurt.model.field.OwnableField
 import at.aau.monopoly.klagenfurt.model.field.PropertyField
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
@@ -22,6 +26,7 @@ import org.springframework.messaging.simp.SimpMessagingTemplate
 import org.springframework.web.socket.CloseStatus
 import org.springframework.web.socket.messaging.SessionDisconnectEvent
 import java.security.Principal
+import at.aau.monopoly.klagenfurt.model.field.ChanceField
 import at.aau.monopoly.klagenfurt.model.field.RailroadField
 import at.aau.monopoly.klagenfurt.model.field.UtilityField
 
@@ -287,7 +292,59 @@ class WebSocketBrokerControllerTest {
         val alice = gameState.players.first { it.id == "host-1" }
         assertEquals(25, alice.money)
         assertNotNull(gameState.pendingPayment)
+        assertFalse(gameState.pendingPayment!!.debtorCanPayAfterAssets)
         assertEquals(GamePhase.PAYING_RENT, gameState.phase)
+    }
+
+    @Test
+    fun `DEBUG_SETUP_BANKRUPTCY after debug forward allows bankruptcy confirmation`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.BUYING
+
+        controller.setDebugMode(true)
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DEBUG_FORWARD_GAME"
+            )
+        )
+        val alice = gameState.players.first { it.id == "host-1" }
+        assertTrue(alice.ownedPropertyIds.isNotEmpty())
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DEBUG_SETUP_BANKRUPTCY"
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("RENT_DUE", event.event)
+        assertFalse(gameState.pendingPayment!!.debtorCanPayAfterAssets)
+        assertTrue(alice.ownedPropertyIds.isEmpty())
+        assertFalse(gameState.fields.filterIsInstance<OwnableField>().any { it.ownerId == alice.id })
+
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DECLARE_BANKRUPTCY"
+            )
+        )
+
+        val events = captureLastMessages(messagingTemplate, 2).map { it.second as GameEvent }
+        assertTrue(alice.eliminated)
+        assertNull(gameState.pendingPayment)
+        assertTrue(events.any { it.event == GameEvent.BANKRUPTCY_DECLARED })
     }
 
     @Test
@@ -342,6 +399,203 @@ class WebSocketBrokerControllerTest {
         val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
         assertEquals("ERROR", event.event)
         assertTrue(event.message!!.contains("Not enough money"))
+    }
+
+
+    private fun captureAllEvents(messagingTemplate: SimpMessagingTemplate): List<GameEvent> {
+        val payloadCaptor = ArgumentCaptor.forClass(Any::class.java)
+        Mockito.verify(messagingTemplate, Mockito.atLeast(0))
+            .convertAndSend(Mockito.anyString(), payloadCaptor.capture())
+        return payloadCaptor.allValues.filterIsInstance<GameEvent>()
+    }
+
+    @Test
+    fun `DEBUG_FORCE_DOUBLET forces a doublet roll`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.ROLLING
+
+        controller.setDebugMode(true)
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DEBUG_FORCE_DOUBLET"
+            )
+        )
+
+        val diceEvent = captureAllEvents(messagingTemplate).find { it.event == "DICE_ROLLED" }
+        assertNotNull(diceEvent, "DICE_ROLLED event should be present")
+        assertTrue(gameState.lastDiceRoll!!.isDouble, "Last dice roll should be a doublet")
+    }
+
+    @Test
+    fun `DEBUG_FORCE_JAIL forces player to jail via third doublet`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.ROLLING
+
+        controller.setDebugMode(true)
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DEBUG_FORCE_JAIL"
+            )
+        )
+
+        val diceEvent = captureAllEvents(messagingTemplate).find { it.event == "DICE_ROLLED" }
+        assertNotNull(diceEvent, "DICE_ROLLED event should be present")
+        assertTrue(gameState.players[0].inJail, "Player should be in jail")
+        assertEquals(10, gameState.players[0].position, "Player should be at position 10")
+    }
+
+    @Test
+    fun `DEBUG_FORCE_BACKWARDS forces a backwards movement card`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.advanceTurn()
+        gameState.phase = GamePhase.BUYING
+
+        controller.setDebugMode(true)
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "DEBUG_FORCE_BACKWARDS"
+            )
+        )
+
+        val drawnEvent = captureAllEvents(messagingTemplate).find { it.event == "ACTION_DRAWN" }
+        assertNotNull(drawnEvent, "ACTION_DRAWN event should be present")
+        assertNotNull(gameState.currentActionCard, "GameState should have a currentActionCard")
+        assertEquals(CardAction.MOVE_FORWARD, gameState.currentActionCard!!.action)
+        assertEquals(-3, gameState.currentActionCard!!.moveSpaces)
+    }
+
+    @Test
+    fun `DEBUG_LAND_ON_TAX_FIELD triggers pending tax payment when cash is insufficient`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 0))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.BUYING
+        val taxField = gameState.fields.filterIsInstance<at.aau.monopoly.klagenfurt.model.field.TaxField>().first()
+
+        controller.setDebugMode(true)
+        controller.handleAction(GameAction(gameState.gameId, "host-1", "DEBUG_LAND_ON_TAX_FIELD"))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals(GameEvent.TAX_DUE, event.event)
+        assertEquals(taxField.id, gameState.players[0].position)
+        assertEquals(GamePhase.PAYING_RENT, gameState.phase)
+        assertEquals(PaymentSource.TAX, gameState.pendingPayment?.source)
+        assertEquals("host-1", gameState.pendingPayment?.debtorPlayerId)
+    }
+
+    @Test
+    fun `DEBUG_EXECUTE_PAY_MONEY caps payment to available cash`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 75))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.BUYING
+
+        controller.setDebugMode(true)
+        controller.handleAction(GameAction(gameState.gameId, "host-1", "DEBUG_EXECUTE_PAY_MONEY"))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ACTION_EXECUTED", event.event)
+        assertEquals(0, gameState.players[0].money)
+        assertEquals(75, gameState.freeParkingMoney)
+    }
+
+    @Test
+    fun `DEBUG_EXECUTE_PAY_PER_BUILDING caps repair payment to available cash`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 50))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
+        val property = gameState.fields.filterIsInstance<PropertyField>().first()
+        property.ownerId = "host-1"
+        property.houses = 2
+        gameState.players[0].ownedPropertyIds.add(property.id)
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.BUYING
+
+        controller.setDebugMode(true)
+        controller.handleAction(GameAction(gameState.gameId, "host-1", "DEBUG_EXECUTE_PAY_PER_BUILDING"))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ACTION_EXECUTED", event.event)
+        assertEquals(0, gameState.players[0].money)
+        assertEquals(50, gameState.freeParkingMoney)
+    }
+
+    @Test
+    fun `DEBUG_EXECUTE_PAY_EACH distributes available cash without negative balance`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 75))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee", money = 300))
+        gameController.joinGame(gameState.gameId, Player(id = "player-3", name = "Charlie", iconId = "gti", money = 200))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.BUYING
+
+        controller.setDebugMode(true)
+        controller.handleAction(GameAction(gameState.gameId, "host-1", "DEBUG_EXECUTE_PAY_EACH"))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ACTION_EXECUTED", event.event)
+        assertEquals(0, gameState.players[0].money)
+        assertEquals(338, gameState.players[1].money)
+        assertEquals(237, gameState.players[2].money)
+    }
+
+    @Test
+    fun `DEBUG_EXECUTE_COLLECT_FROM_EACH caps each payer at available cash`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 500))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee", money = 5))
+        gameController.joinGame(gameState.gameId, Player(id = "player-3", name = "Charlie", iconId = "gti", money = 0))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.BUYING
+
+        controller.setDebugMode(true)
+        controller.handleAction(GameAction(gameState.gameId, "host-1", "DEBUG_EXECUTE_COLLECT_FROM_EACH"))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ACTION_EXECUTED", event.event)
+        assertEquals(505, gameState.players[0].money)
+        assertEquals(0, gameState.players[1].money)
+        assertEquals(0, gameState.players[2].money)
+    }
+
+    @Test
+    fun `DEBUG actions fail when debug mode disabled`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.advanceTurn()
+
+        val actions = listOf("DEBUG_LAND_ON_TAX_FIELD", "DEBUG_EXECUTE_PAY_MONEY", "DEBUG_EXECUTE_PAY_PER_BUILDING", "DEBUG_EXECUTE_PAY_EACH", "DEBUG_EXECUTE_COLLECT_FROM_EACH", "DEBUG_FORCE_DOUBLET", "DEBUG_FORCE_JAIL", "DEBUG_FORCE_BACKWARDS", "DEBUG_FORCE_GAME_OVER")
+
+        controller.setDebugMode(false)
+        for (actionType in actions) {
+            Mockito.clearInvocations(messagingTemplate)
+            controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = actionType))
+            val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+            assertEquals("ERROR", event.event)
+            assertTrue(event.message!!.contains("Debug actions are disabled"))
+        }
     }
 
 
@@ -1421,6 +1675,159 @@ class WebSocketBrokerControllerTest {
     }
 
     @Test
+    fun `third doublet jail advances to next player and next player can roll normally`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
+        val alice = gameState.players.first { it.id == "host-1" }
+        val bob = gameState.players.first { it.id == "player-2" }
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.ROLLING
+        alice.consecutiveDoublets = 2
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "ROLL_DICE",
+                payload = mutableMapOf("cheat" to "true")
+            )
+        )
+
+        assertTrue(alice.inJail)
+        assertEquals(10, alice.position)
+        assertEquals(0, alice.consecutiveDoublets)
+        assertEquals(GamePhase.TURN_END, gameState.phase)
+
+        Mockito.clearInvocations(messagingTemplate)
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "END_TURN"))
+
+        val endTurnEvent = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("TURN_ENDED", endTurnEvent.event)
+        assertEquals("player-2", gameState.currentPlayer!!.id)
+        assertEquals(GamePhase.ROLLING, gameState.phase)
+
+        Mockito.clearInvocations(messagingTemplate)
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "player-2",
+                action = "ROLL_DICE",
+                payload = mutableMapOf("cheat" to "true")
+            )
+        )
+
+        val bobRollEvent = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("DICE_ROLLED", bobRollEvent.event)
+        assertEquals("player-2", gameState.currentPlayer!!.id)
+        assertFalse(bob.inJail)
+        assertEquals(GamePhase.BUYING, gameState.phase)
+    }
+
+    @Test
+    fun `player jailed by third doublet can pay fine and roll on next own turn`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 100))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
+        val alice = gameState.players.first { it.id == "host-1" }
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.ROLLING
+        alice.consecutiveDoublets = 2
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "ROLL_DICE",
+                payload = mutableMapOf("cheat" to "true")
+            )
+        )
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "END_TURN"))
+
+        gameState.lastDiceRoll = DiceRoll(1, 2)
+        gameState.phase = GamePhase.TURN_END
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "player-2", action = "END_TURN"))
+
+        assertEquals("host-1", gameState.currentPlayer!!.id)
+        assertEquals(GamePhase.ROLLING, gameState.phase)
+        assertTrue(alice.inJail)
+
+        Mockito.clearInvocations(messagingTemplate)
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "PAY_JAIL_FINE"))
+
+        val fineEvent = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("JAIL_FINE_PAID", fineEvent.event)
+        assertEquals(50, alice.money)
+        assertFalse(alice.inJail)
+        assertEquals(GamePhase.ROLLING, gameState.phase)
+
+        Mockito.clearInvocations(messagingTemplate)
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "ROLL_DICE",
+                payload = mutableMapOf("cheat" to "true")
+            )
+        )
+
+        val rollEvent = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("DICE_ROLLED", rollEvent.event)
+        assertFalse(alice.inJail)
+        assertEquals(GamePhase.BUYING, gameState.phase)
+    }
+
+    @Test
+    fun `player jailed by third doublet can try a doublet on next own turn`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
+        val alice = gameState.players.first { it.id == "host-1" }
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.ROLLING
+        alice.consecutiveDoublets = 2
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "ROLL_DICE",
+                payload = mutableMapOf("cheat" to "true")
+            )
+        )
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "END_TURN"))
+
+        gameState.lastDiceRoll = DiceRoll(1, 2)
+        gameState.phase = GamePhase.TURN_END
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "player-2", action = "END_TURN"))
+
+        assertEquals("host-1", gameState.currentPlayer!!.id)
+        assertEquals(GamePhase.ROLLING, gameState.phase)
+        assertTrue(alice.inJail)
+
+        Mockito.clearInvocations(messagingTemplate)
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "ROLL_DICE",
+                payload = mutableMapOf("cheat" to "true")
+            )
+        )
+
+        val rollEvent = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("DICE_ROLLED", rollEvent.event)
+        assertTrue(rollEvent.message!!.contains("got out of jail"))
+        assertFalse(alice.inJail)
+        assertEquals(0, alice.jailTurns)
+        assertEquals(0, alice.consecutiveDoublets)
+        assertEquals(GamePhase.BUYING, gameState.phase)
+    }
+
+    @Test
     fun `handleAction ROLL_DICE lands on go to jail field with doublet`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
@@ -1650,6 +2057,16 @@ class WebSocketBrokerControllerTest {
     }
 
     @Test
+    fun `card descriptions sent to log use euro currency`() {
+        val descriptions = BoardFactory.createChanceCards().map { it.description } +
+                BoardFactory.createCommunityChestCards().map { it.description }
+
+        assertTrue(descriptions.any { it.contains("€") })
+        assertTrue(descriptions.none { it.contains("\$") })
+        assertTrue(descriptions.none { Regex("\\d+M").containsMatchIn(it) })
+    }
+
+    @Test
     fun `handleAction DRAW_CARD should fail when game has no current player`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
@@ -1698,6 +2115,9 @@ class WebSocketBrokerControllerTest {
         assertEquals(1440, gameState.currentPlayer!!.money)
         assertEquals("host-1", (gameState.fields[1] as PropertyField).ownerId)
         assertTrue(event.message!!.contains("Alice bought"))
+        assertTrue(event.message!!.contains("60€"))
+        assertFalse(event.message!!.contains("\$"))
+        assertFalse(event.message!!.contains("60M"))
     }
 
     @Test
@@ -2184,7 +2604,15 @@ class WebSocketBrokerControllerTest {
             val diceEvent = events.find { it.event == "DICE_ROLLED" }
 
             if (gameState.lastDiceRoll != null && !gameState.lastDiceRoll!!.isDouble) {
-                assertEquals(1700, player.money)
+                // From 38:
+                // - roll 3 (2+1): land on 1. Money: 1500 + 200 = 1700
+                // - roll 4 (3+1): land on 2. Money: 1500 + 200 = 1700
+                // - roll 5 (4+1 or 3+2): land on 3. Money: 1500 + 200 = 1700
+                // - roll 6 (5+1 or 4+2): land on 4 (Tax). Money: 1500 + 200 - 200 = 1500
+                // - roll 7 (6+1 or 5+2 or 4+3): land on 5. Money: 1500 + 200 = 1700
+                // ... and so on.
+                val expectedMoney = if (player.position == 4) 1500 else 1700
+                assertEquals(expectedMoney, player.money)
                 assertTrue(diceEvent?.message?.contains("passed Go") == true)
                 break
             }
@@ -3032,6 +3460,73 @@ class WebSocketBrokerControllerTest {
         assertEquals(250, gameState.players[2].money) // 200 + 50
     }
 
+    @Test
+    fun `executeAction COLLECT_FROM_EACH caps each payer at zero`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame()
+        val player1 = Player(id = "p1", name = "Alice", iconId = "lindwurm", money = 500)
+        val player2 = Player(id = "p2", name = "Bob", iconId = "woerthersee", money = 5)
+        val player3 = Player(id = "p3", name = "Charlie", iconId = "gti", money = 0)
+        gameController.joinGame(gameState.gameId, player1)
+        gameController.joinGame(gameState.gameId, player2)
+        gameController.joinGame(gameState.gameId, player3)
+
+        gameState.currentActionCard = CommunityChestCard(
+            id = 100,
+            description = "Collect 10 from each",
+            action = CardAction.COLLECT_FROM_EACH,
+            amount = 10
+        )
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "p1",
+                action = "EXECUTE_ACTION"
+            )
+        )
+
+        captureLastMessages(messagingTemplate, 1)
+
+        assertEquals(505, gameState.players[0].money)
+        assertEquals(0, gameState.players[1].money)
+        assertEquals(0, gameState.players[2].money)
+    }
+
+    @Test
+    fun `executeAction PAY_EACH_PLAYER distributes available cash without negative balance`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame()
+        val player1 = Player(id = "p1", name = "Alice", iconId = "lindwurm", money = 75)
+        val player2 = Player(id = "p2", name = "Bob", iconId = "woerthersee", money = 300)
+        val player3 = Player(id = "p3", name = "Charlie", iconId = "gti", money = 200)
+        gameController.joinGame(gameState.gameId, player1)
+        gameController.joinGame(gameState.gameId, player2)
+        gameController.joinGame(gameState.gameId, player3)
+
+        gameState.currentActionCard = ChanceCard(
+            id = 100,
+            description = "Pay each player 50",
+            action = CardAction.PAY_EACH_PLAYER,
+            amount = 50
+        )
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "p1",
+                action = "EXECUTE_ACTION"
+            )
+        )
+
+        captureLastMessages(messagingTemplate, 1)
+
+        assertEquals(0, gameState.players[0].money)
+        assertEquals(338, gameState.players[1].money)
+        assertEquals(237, gameState.players[2].money)
+        assertEquals(575, gameState.players.sumOf { it.money })
+    }
+
 
     @Test
     fun `deck reshuffle on empty should regenerate cards`() {
@@ -3105,7 +3600,7 @@ class WebSocketBrokerControllerTest {
         assertEquals(GameEvent.RENT_PAID, event.event)
         assertNotNull(event.message)
         assertTrue(event.message!!.contains("Alice"))
-        assertTrue(event.message!!.contains("100M"))
+        assertTrue(event.message!!.contains("100€"))
         assertTrue(event.message!!.contains("Bob"))
         assertEquals(400, gameState.players[0].money)
         assertEquals(600, gameState.players[1].money)
@@ -3174,12 +3669,13 @@ class WebSocketBrokerControllerTest {
     }
 
     @Test
-    fun `handleBuyHouse rejects when phase is PAYING_RENT`() {
+    fun `handleBuyHouse should block debtor when they have pending payment`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
         gameState.currentPlayerIndex = 0
         gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(amount = 100, source = PaymentSource.TAX, debtorPlayerId = "host-1")
 
         controller.handleAction(
             GameAction(
@@ -3192,16 +3688,76 @@ class WebSocketBrokerControllerTest {
 
         val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
         assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("Cannot buy houses while rent is due"))
+        assertTrue(event.message!!.contains("You cannot buy houses while you have a pending payment"))
     }
 
     @Test
-    fun `handleBuyHotel rejects when phase is PAYING_RENT`() {
+    fun `handleBuyHouse should block current player when legacy pending payment has no debtor`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
         gameState.currentPlayerIndex = 0
         gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(amount = 100, source = PaymentSource.TAX)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "BUY_HOUSE",
+                payload = mutableMapOf("fieldId" to "1")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("You cannot buy houses while you have a pending payment"))
+    }
+
+    @Test
+    fun `handleBuyHouse should allow non-debtor to build even during PAYING_RENT phase`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        val alice = Player(id = "host-1", name = "Alice", iconId = "icon1", money = 2000)
+        val bob = Player(id = "host-2", name = "Bob", iconId = "icon2", money = 2000)
+        gameController.joinGame(gameState.gameId, alice)
+        gameController.joinGame(gameState.gameId, bob)
+
+        // Setup: Bob owns Herrengasse (id 1) and Heiligengeistplatz (id 3) - Brown set
+        val prop1 = gameState.fields[1] as PropertyField
+        val prop3 = gameState.fields[3] as PropertyField
+        prop1.ownerId = "host-2"
+        prop3.ownerId = "host-2"
+        bob.ownedPropertyIds.addAll(listOf(1, 3))
+
+        // Alice is currently paying rent/tax
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(amount = 100, source = PaymentSource.TAX, debtorPlayerId = "host-1")
+
+        // Bob tries to buy a house on Herrengasse
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-2",
+                action = "BUY_HOUSE",
+                payload = mutableMapOf("fieldId" to "1")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("HOUSE_BOUGHT", event.event)
+        assertEquals(1, prop1.houses)
+    }
+
+    @Test
+    fun `handleBuyHotel should block debtor when they have pending payment`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice"))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(amount = 100, source = PaymentSource.TAX, debtorPlayerId = "host-1")
 
         controller.handleAction(
             GameAction(
@@ -3214,7 +3770,45 @@ class WebSocketBrokerControllerTest {
 
         val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
         assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("Cannot buy hotels while rent is due"))
+        assertTrue(event.message!!.contains("You cannot buy hotels while you have a pending payment"))
+    }
+
+    @Test
+    fun `handleBuyHotel should allow non-debtor to build even during PAYING_RENT phase`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        val alice = Player(id = "host-1", name = "Alice", iconId = "icon1", money = 2000)
+        val bob = Player(id = "host-2", name = "Bob", iconId = "icon2", money = 2000)
+        gameController.joinGame(gameState.gameId, alice)
+        gameController.joinGame(gameState.gameId, bob)
+
+        // Setup: Bob owns Herrengasse (id 1) and Heiligengeistplatz (id 3) - Brown set
+        val prop1 = gameState.fields[1] as PropertyField
+        val prop3 = gameState.fields[3] as PropertyField
+        prop1.ownerId = "host-2"
+        prop3.ownerId = "host-2"
+        prop1.houses = 4
+        prop3.houses = 4
+        bob.ownedPropertyIds.addAll(listOf(1, 3))
+
+        // Alice is currently paying rent/tax
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(amount = 100, source = PaymentSource.TAX, debtorPlayerId = "host-1")
+
+        // Bob tries to buy a hotel on Herrengasse
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-2",
+                action = "BUY_HOTEL",
+                payload = mutableMapOf("fieldId" to "1")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("HOTEL_BOUGHT", event.event)
+        assertTrue(prop1.hasHotel)
     }
 
     @Test
@@ -3636,7 +4230,35 @@ class WebSocketBrokerControllerTest {
 
         val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
         assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("Cannot unmortgage while rent is due"))
+        assertTrue(event.message!!.contains("pending payment"))
+    }
+
+    @Test
+    fun `UNMORTGAGE allows non-debtor during PAYING_RENT phase`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 500))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee", money = 500))
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(
+            amount = 200,
+            source = PaymentSource.RENT,
+            sourceFieldId = 1,
+            creditorPlayerId = "host-2",
+            debtorPlayerId = "host-1"
+        )
+        gameState.currentPlayerIndex = 0
+        val prop = gameState.fields[3] as PropertyField
+        prop.ownerId = "host-2"
+        prop.isMortgaged = true
+        gameState.players[1].ownedPropertyIds.add(3)
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-2", action = "UNMORTGAGE_PROPERTY",
+            payload = mutableMapOf("fieldId" to "3")))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals(GameEvent.PROPERTY_UNMORTGAGED, event.event)
+        assertFalse(prop.isMortgaged)
     }
 
     @Test
@@ -3674,10 +4296,11 @@ class WebSocketBrokerControllerTest {
     }
 
     @Test
-    fun `DECLARE_BANKRUPTCY rejects when player has buildings`() {
+    fun `DECLARE_BANKRUPTCY succeeds with buildings when total assets are insufficient`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 10))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee", money = 500))
         gameState.phase = GamePhase.PAYING_RENT
         gameState.pendingPayment = PendingPayment(amount = 100, source = PaymentSource.RENT, sourceFieldId = 1,
             creditorPlayerId = "host-2")
@@ -3689,16 +4312,20 @@ class WebSocketBrokerControllerTest {
 
         controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "DECLARE_BANKRUPTCY"))
 
-        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("Sell all houses and hotels"))
+        val events = captureLastMessages(messagingTemplate, 2).map { it.second as GameEvent }
+        assertTrue(events.any { it.event == GameEvent.BANKRUPTCY_DECLARED })
+        assertTrue(gameState.players[0].eliminated)
+        assertEquals("host-2", prop.ownerId)
+        assertEquals(0, prop.houses)
+        assertFalse(prop.hasHotel)
     }
 
     @Test
-    fun `DECLARE_BANKRUPTCY rejects when player has unmortgaged properties`() {
+    fun `DECLARE_BANKRUPTCY succeeds with unmortgaged properties when total assets are insufficient`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 10))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee", money = 500))
         gameState.phase = GamePhase.PAYING_RENT
         gameState.pendingPayment = PendingPayment(amount = 100, source = PaymentSource.RENT, sourceFieldId = 1,
             creditorPlayerId = "host-2")
@@ -3709,9 +4336,11 @@ class WebSocketBrokerControllerTest {
 
         controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "DECLARE_BANKRUPTCY"))
 
-        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("Mortgage all properties"))
+        val events = captureLastMessages(messagingTemplate, 2).map { it.second as GameEvent }
+        assertTrue(events.any { it.event == GameEvent.BANKRUPTCY_DECLARED })
+        assertTrue(gameState.players[0].eliminated)
+        assertEquals("host-2", prop.ownerId)
+        assertFalse(prop.isMortgaged)
     }
 
     @Test
@@ -3755,6 +4384,53 @@ class WebSocketBrokerControllerTest {
         assertTrue(events.any { it.event == GameEvent.GAME_OVER })
         assertEquals(0, gameState.players[0].money)
         assertNull(prop.ownerId)
+    }
+
+    @Test
+    fun `DECLARE_BANKRUPTCY for tax returns properties to bank and does not increase free parking`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 10, iconId = "lindwurm"))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", money = 500, iconId = "woerthersee"))
+        gameController.joinGame(gameState.gameId, Player(id = "host-3", name = "Charlie", money = 500, iconId = "gti"))
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(
+            amount = 10_000,
+            source = PaymentSource.TAX,
+            sourceFieldId = 4,
+            creditorPlayerId = null,
+            debtorPlayerId = "host-1",
+            debtorCanPayAfterAssets = false
+        )
+        gameState.currentPlayerIndex = 0
+        gameState.freeParkingMoney = 300
+
+        val properties = gameState.fields.filterIsInstance<PropertyField>()
+        val mortgagedProperty = properties[0]
+        mortgagedProperty.ownerId = "host-1"
+        mortgagedProperty.isMortgaged = true
+        val builtProperty = properties[1]
+        builtProperty.ownerId = "host-1"
+        builtProperty.houses = 2
+        gameState.players[0].ownedPropertyIds.addAll(listOf(mortgagedProperty.id, builtProperty.id))
+
+        controller.handleAction(GameAction(gameId = gameState.gameId, playerId = "host-1", action = "DECLARE_BANKRUPTCY"))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+
+        assertEquals(GameEvent.BANKRUPTCY_DECLARED, event.event)
+        assertEquals(0, gameState.players[0].money)
+        assertTrue(gameState.players[0].eliminated)
+        assertEquals(1, gameState.currentPlayerIndex)
+        assertEquals(GamePhase.ROLLING, gameState.phase)
+        assertNull(gameState.pendingPayment)
+        assertEquals(300, gameState.freeParkingMoney)
+        assertNull(mortgagedProperty.ownerId)
+        assertFalse(mortgagedProperty.isMortgaged)
+        assertNull(builtProperty.ownerId)
+        assertEquals(0, builtProperty.houses)
+        assertFalse(builtProperty.hasHotel)
+        assertTrue(gameState.players[0].ownedPropertyIds.isEmpty())
     }
 
     @Test
@@ -4323,11 +4999,32 @@ class WebSocketBrokerControllerTest {
     }
 
     @Test
-    fun `executeAction GO_TO_JAIL should move player to jail`() {
+    fun `executeAction PAY_MONEY caps payment at available cash`() {
+        val (controller, gameController, _) = createController()
+        val gameState = gameController.createGame("host")
+        val player = Player(id = "p1", name = "Alice", money = 20)
+        gameController.joinGame(gameState.gameId, player)
+
+        val card = ChanceCard(id = 20, description = "Pay 50", action = CardAction.PAY_MONEY, amount = 50)
+        gameState.currentActionCard = card
+        gameState.currentPlayerIndex = 0
+        gameState.freeParkingMoney = 100
+
+        controller.handleAction(GameAction(gameState.gameId, "p1", "EXECUTE_ACTION"))
+
+        assertEquals(0, player.money)
+        assertEquals(120, gameState.freeParkingMoney)
+    }
+
+    @Test
+    fun `executeAction GO_TO_JAIL should move player to jail and end turn`() {
         val (controller, gameController, _) = createController()
         val gameState = gameController.createGame("host")
         val player = Player(id = "p1", name = "Alice", money = 1500, position = 15)
         gameController.joinGame(gameState.gameId, player)
+        gameState.phase = GamePhase.BUYING
+        gameState.lastDiceRoll = DiceRoll(3, 3)
+        player.consecutiveDoublets = 1
 
         val card = at.aau.monopoly.klagenfurt.model.card.ChanceCard(id = 5, description = "Go to Jail", action = at.aau.monopoly.klagenfurt.model.enums.CardAction.GO_TO_JAIL)
         gameState.currentActionCard = card
@@ -4337,6 +5034,8 @@ class WebSocketBrokerControllerTest {
 
         assertEquals(10, player.position)
         assertTrue(player.inJail)
+        assertEquals(0, player.consecutiveDoublets)
+        assertEquals(GamePhase.TURN_END, gameState.phase)
     }
 
     @Test
@@ -4497,6 +5196,38 @@ class WebSocketBrokerControllerTest {
     }
 
     @Test
+    fun `executeAction MOVE_TO with unresolved nearest railroad sends error and keeps position`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val player = Player(id = "p1", name = "Alice", money = 1500, position = 0)
+        val gameState = GameState(
+            gameId = "custom-game",
+            fields = (0 until 40).map { id -> ChanceField(id = id, name = "Field $id") },
+            players = mutableListOf(player),
+            currentPlayerIndex = 0,
+            phase = GamePhase.BUYING,
+            currentActionCard = ChanceCard(
+                id = 11,
+                description = "Advance to nearest Railroad",
+                action = CardAction.MOVE_TO,
+                targetFieldId = -1
+            )
+        )
+        val gamesField = GameController::class.java.getDeclaredField("games")
+        gamesField.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val games = gamesField.get(gameController) as java.util.concurrent.ConcurrentHashMap<String, GameState>
+        games[gameState.gameId] = gameState
+
+        controller.handleAction(GameAction(gameState.gameId, "p1", "EXECUTE_ACTION"))
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        assertEquals("ERROR", event.event)
+        assertTrue(event.message!!.contains("target field could not be resolved"))
+        assertEquals(0, player.position)
+        assertNotNull(gameState.currentActionCard)
+    }
+
+    @Test
     fun `executeAction MOVE_FORWARD collects 200 when passing Go`() {
         val (controller, gameController, _) = createController()
         val gameState = gameController.createGame("host")
@@ -4610,6 +5341,72 @@ class WebSocketBrokerControllerTest {
     }
 
     @Test
+    fun `forceEndTurn auto liquidation preserves even building rule`() {
+        val (controller, gameController, _) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 0))
+        gameState.currentPlayerIndex = 0
+
+        val player = gameState.players[0]
+        val group = gameState.fields
+            .filterIsInstance<PropertyField>()
+            .filter { it.color == PropertyColor.LIGHT_BLUE }
+        assertEquals(3, group.size)
+        group.forEach { property ->
+            property.ownerId = player.id
+            property.houses = 4
+            player.ownedPropertyIds.add(property.id)
+        }
+
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(
+            amount = group.first().houseCost,
+            source = PaymentSource.TAX,
+            sourceFieldId = 4
+        )
+
+        controller.forceEndTurn(gameState.gameId)
+
+        assertEquals(listOf(3, 3, 4), group.map { it.houses }.sorted())
+        assertNull(gameState.pendingPayment)
+        assertFalse(player.eliminated)
+    }
+
+    @Test
+    fun `forceEndTurn declares bankruptcy after legal auto liquidation cannot cover debt`() {
+        val (controller, gameController, _) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 0))
+        gameController.joinGame(gameState.gameId, Player(id = "host-2", name = "Bob", iconId = "woerthersee", money = 1500))
+        gameState.currentPlayerIndex = 0
+
+        val player = gameState.players[0]
+        val group = gameState.fields
+            .filterIsInstance<PropertyField>()
+            .filter { it.color == PropertyColor.LIGHT_BLUE }
+        group.forEach { property ->
+            property.ownerId = player.id
+            property.houses = 4
+            player.ownedPropertyIds.add(property.id)
+        }
+
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(
+            amount = 10_000,
+            source = PaymentSource.RENT,
+            sourceFieldId = group.first().id,
+            creditorPlayerId = "host-2"
+        )
+
+        controller.forceEndTurn(gameState.gameId)
+
+        assertTrue(player.eliminated)
+        assertNull(gameState.pendingPayment)
+        assertTrue(group.all { it.houses == 0 && !it.hasHotel })
+        assertTrue(group.all { it.ownerId == "host-2" })
+    }
+
+    @Test
     fun `executeAction MOVE_TO collects 200 when passing Go`() {
         val (controller, gameController, _) = createController()
         val gameState = gameController.createGame("host")
@@ -4624,6 +5421,84 @@ class WebSocketBrokerControllerTest {
 
         assertEquals(0, player.position)
         assertEquals(1700, player.money)
+    }
+
+    @Test
+    fun `executeAction MOVE_TO field 30 jails player`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame("host")
+        val player = Player(id = "p1", name = "Alice", money = 1500, position = 0)
+        gameController.joinGame(gameState.gameId, player)
+
+        // Field 30 is GoToJailField in createDefaultBoard
+        val card = ChanceCard(id = 100, description = "Go to field 30", action = CardAction.MOVE_TO, targetFieldId = 30)
+        gameState.currentActionCard = card
+        gameState.currentPlayerIndex = 0
+
+        controller.handleAction(GameAction(gameState.gameId, "p1", "EXECUTE_ACTION"))
+
+        val events = captureLastMessages(messagingTemplate, 2)
+        // One for ACTION_EXECUTED, one for PLAYER_JAILED
+        assertTrue(events.any { (it.second as GameEvent).event == "PLAYER_JAILED" })
+        assertEquals(10, player.position)
+        assertTrue(player.inJail)
+        assertEquals(GamePhase.TURN_END, gameState.phase)
+    }
+
+    @Test
+    fun `executeAction MOVE_TO should send ACTION_EXECUTED before secondary landing events`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", money = 1000))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", money = 1000, iconId = "woerthersee"))
+
+        // Bob owns Herrengasse (id 1)
+        (gameState.fields[1] as PropertyField).ownerId = "player-2"
+
+        // Alice at Go
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.BUYING
+
+        // Alice draws "Advance to Herrengasse" (id 1)
+        val card = ChanceCard(id = 999, description = "To Herrengasse", action = CardAction.MOVE_TO, targetFieldId = 1)
+        gameState.currentActionCard = card
+
+        controller.handleAction(GameAction(gameState.gameId, "host-1", "EXECUTE_ACTION"))
+
+        val destinationCaptor = ArgumentCaptor.forClass(String::class.java)
+        val payloadCaptor = ArgumentCaptor.forClass(Any::class.java)
+        Mockito.verify(messagingTemplate, Mockito.atLeastOnce())
+            .convertAndSend(destinationCaptor.capture(), payloadCaptor.capture())
+
+        val events = payloadCaptor.allValues.filterIsInstance<GameEvent>()
+        val actionIndex = events.indexOfFirst { it.event == "ACTION_EXECUTED" }
+        val rentIndex = events.indexOfFirst { it.event == "RENT_DUE" }
+
+        assertTrue(actionIndex != -1, "ACTION_EXECUTED not found")
+        assertTrue(rentIndex != -1, "RENT_DUE not found")
+        assertTrue(actionIndex < rentIndex, "ACTION_EXECUTED must come before RENT_DUE to avoid teleporting")
+        assertNull(events[actionIndex].gameState?.currentActionCard, "Action card must be cleared in ACTION_EXECUTED")
+    }
+
+    @Test
+    fun `executeAction MOVE_FORWARD negative should trigger landing effects`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame("host")
+        // Start Alice at index 33 (Community Chest)
+        val player = Player(id = "p1", name = "Alice", money = 1500, position = 33)
+        gameController.joinGame(gameState.gameId, player)
+
+        // Move back 3 spaces to field 30 (Go To Jail)
+        val card = ChanceCard(id = 101, description = "Stumble 3 spaces back", action = CardAction.MOVE_FORWARD, moveSpaces = -3)
+        gameState.currentActionCard = card
+        gameState.currentPlayerIndex = 0
+
+        controller.handleAction(GameAction(gameState.gameId, "p1", "EXECUTE_ACTION"))
+
+        val events = captureLastMessages(messagingTemplate, 2)
+        assertTrue(events.any { (it.second as GameEvent).event == "PLAYER_JAILED" })
+        assertEquals(10, player.position)
+        assertTrue(player.inJail)
     }
 
     @Test
@@ -4686,6 +5561,35 @@ class WebSocketBrokerControllerTest {
 
         assertEquals(1350, player.money)
         assertEquals(150, gameState.freeParkingMoney)
+    }
+
+    @Test
+    fun `executeAction PAY_PER_BUILDING caps payment at available cash`() {
+        val (controller, gameController, _) = createController()
+        val gameState = gameController.createGame("host")
+        val player = Player(id = "p1", name = "Alice", money = 40)
+        gameController.joinGame(gameState.gameId, player)
+
+        val prop1 = gameState.fields[1] as PropertyField
+        prop1.ownerId = "p1"
+        prop1.houses = 2
+        player.ownedPropertyIds.add(1)
+
+        val prop3 = gameState.fields[3] as PropertyField
+        prop3.ownerId = "p1"
+        prop3.hasHotel = true
+        prop3.houses = 0
+        player.ownedPropertyIds.add(3)
+
+        val card = ChanceCard(id = 21, description = "Street repairs", action = CardAction.PAY_PER_BUILDING, perBuildingAmount = 25, perHotelAmount = 100)
+        gameState.currentActionCard = card
+        gameState.currentPlayerIndex = 0
+        gameState.freeParkingMoney = 0
+
+        controller.handleAction(GameAction(gameState.gameId, "p1", "EXECUTE_ACTION"))
+
+        assertEquals(0, player.money)
+        assertEquals(40, gameState.freeParkingMoney)
     }
 
     @Test
@@ -5411,7 +6315,7 @@ class WebSocketBrokerControllerTest {
         val fpEvent = events.find { it.event == GameEvent.FREE_PARKING_COLLECTED }!!
         assertNotNull(fpEvent.message)
         assertTrue(fpEvent.message!!.contains("Alice"))
-        assertTrue(fpEvent.message!!.contains("300M"))
+        assertTrue(fpEvent.message!!.contains("300€"))
         assertTrue(fpEvent.message!!.contains("Free Parking"))
     }
     @Test
@@ -5450,7 +6354,7 @@ class WebSocketBrokerControllerTest {
         assertEquals(GameEvent.TAX_PAID, event.event)
         assertNotNull(event.message)
         assertTrue(event.message!!.contains("Alice"))
-        assertTrue(event.message!!.contains("100M"))
+        assertTrue(event.message!!.contains("100€"))
         assertTrue(event.message!!.contains("tax"))
         assertEquals(50, player.money)
         assertEquals(100, gameState.freeParkingMoney)
@@ -6107,6 +7011,45 @@ class WebSocketBrokerControllerTest {
         assertTrue(offer.requestPropertyIds.isEmpty())
         assertTrue(offer.acceptedByPlayerIds.isEmpty())
     }
+
+    @Test
+    fun `PROPOSE_TRADE starts live offer while current player has pending payment`() {
+        val (controller, gameController, messagingTemplate) = createController()
+        val gameState = gameController.createGame(hostPlayerId = "host-1")
+        gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
+        gameController.joinGame(gameState.gameId, Player(id = "player-2", name = "Bob", iconId = "woerthersee"))
+        gameState.currentPlayerIndex = 0
+        gameState.phase = GamePhase.PAYING_RENT
+        gameState.pendingPayment = PendingPayment(
+            amount = 500,
+            source = PaymentSource.RENT,
+            sourceFieldId = 1,
+            creditorPlayerId = "player-2",
+            debtorPlayerId = "host-1"
+        )
+
+        Mockito.clearInvocations(messagingTemplate)
+
+        controller.handleAction(
+            GameAction(
+                gameId = gameState.gameId,
+                playerId = "host-1",
+                action = "PROPOSE_TRADE",
+                payload = mutableMapOf("toPlayerId" to "player-2")
+            )
+        )
+
+        val event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
+        val offer = gameState.pendingTradeOffer
+
+        assertEquals(GameEvent.TRADE_PROPOSED, event.event)
+        assertEquals(GamePhase.PAYING_RENT, gameState.phase)
+        assertNotNull(gameState.pendingPayment)
+        assertNotNull(offer)
+        assertEquals("host-1", offer!!.fromPlayerId)
+        assertEquals("player-2", offer.toPlayerId)
+    }
+
     @Test
     fun `DECLARE_BANKRUPTCY with only one active player left should send GAME_OVER`() {
         val (controller, gameController, messagingTemplate) = createController()
@@ -6604,7 +7547,7 @@ class WebSocketBrokerControllerTest {
     }
 
     @Test
-    fun `PROPOSE_TRADE rejects inactive phases and pending payments`() {
+    fun `PROPOSE_TRADE rejects inactive phases`() {
         val (controller, gameController, messagingTemplate) = createController()
         val gameState = gameController.createGame(hostPlayerId = "host-1")
         gameController.joinGame(gameState.gameId, Player(id = "host-1", name = "Alice", iconId = "lindwurm"))
@@ -6617,15 +7560,6 @@ class WebSocketBrokerControllerTest {
         var event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
         assertEquals("ERROR", event.event)
         assertTrue(event.message!!.contains("active game"))
-
-        gameState.phase = GamePhase.PAYING_RENT
-        Mockito.clearInvocations(messagingTemplate)
-        controller.handleAction(
-            GameAction(gameState.gameId, "host-1", "PROPOSE_TRADE", mutableMapOf("toPlayerId" to "player-2"))
-        )
-        event = captureLastMessages(messagingTemplate, 1).single().second as GameEvent
-        assertEquals("ERROR", event.event)
-        assertTrue(event.message!!.contains("payment is due"))
     }
 
     @Test

@@ -13,6 +13,7 @@ data class PendingPayment(
     val source: PaymentSource,
     val sourceFieldId: Int? = null,
     val creditorPlayerId: String? = null,
+    val debtorPlayerId: String? = null,
     val debtorCanPayAfterAssets: Boolean = false
 )
 
@@ -84,6 +85,11 @@ data class GameState(
         pendingPayment = null
         pendingTradeOffer = null
         hasDrawnCardThisTurn = false
+        bankruptcyPlayerId = ""
+        bankruptcyTotalAssets = 0
+        bankruptcyTotalDebt = 0
+        bankruptcyPropertiesCount = 0
+        bankruptcyOwnedFieldIds = emptyList()
         resetTurnTimer()
     }
 
